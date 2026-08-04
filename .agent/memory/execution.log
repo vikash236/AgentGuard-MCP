@@ -1,3 +1,5 @@
 # Execution Log
 
 [2026-08-04T21:55:00Z] Workspace initialized. Created root configuration, AGENTS.md, CLAUDE.md, GEMINI.md, and .agent board specs.
+[2026-08-04T22:43:00Z] README.md rewritten with improved project motivation. Grounded in real CVEs (CVE-2025-54135, CVE-2025-53773), NSA/CISA May 2026 MCP advisory, breach incidents (Mexican gov, ClawHavoc), competitive gap analysis, and attack-chain-first architecture rationale.
+[2026-08-04T22:55:00Z] Phase 0 complete. Cargo workspace scaffolded (root binary + 3 crates). Auditor crate implemented: schema parser (3 input formats), 6 security rules (AUDIT-001..006), report formatter (human + JSON). Stub crates for jail/redactor. 31 unit tests passing, clippy clean, CLI verified against vulnerable and safe fixture manifests.

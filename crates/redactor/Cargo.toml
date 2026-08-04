@@ -1,0 +1,8 @@
+[package]
+name = "agentguard-redactor"
+version = "0.1.0"
+edition = "2024"
+description = "Regex and entropy-based secret redactor for MCP tool outputs"
+license = "MIT"
+
+[dependencies]

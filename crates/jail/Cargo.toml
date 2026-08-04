@@ -1,0 +1,8 @@
+[package]
+name = "agentguard-jail"
+version = "0.1.0"
+edition = "2024"
+description = "Path canonicalization and chroot isolation enforcer for MCP tool calls"
+license = "MIT"
+
+[dependencies]
