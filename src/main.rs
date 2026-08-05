@@ -1,3 +1,5 @@
+mod proxy;
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
@@ -21,9 +23,29 @@ enum Commands {
         #[arg(long, default_value = "human")]
         format: String,
     },
+
+    /// Run stdio JSON-RPC security proxy for an MCP server process.
+    Proxy {
+        /// Path root for path chroot jail.
+        #[arg(long, value_name = "PATH")]
+        jail: PathBuf,
+
+        /// Enable real-time secret redactor (regex + Shannon entropy scanning).
+        #[arg(long)]
+        redact: bool,
+
+        /// Executable command to launch MCP server.
+        #[arg(required = true)]
+        command: String,
+
+        /// Arguments passed to the target MCP server command.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -35,12 +57,22 @@ fn main() {
                     if has_critical_or_high {
                         process::exit(1);
                     }
-                    // Exit 0: clean or only medium/low findings.
                 }
                 Err(e) => {
                     eprintln!("error: {e}");
                     process::exit(2);
                 }
+            }
+        }
+        Commands::Proxy {
+            jail,
+            redact,
+            command,
+            args,
+        } => {
+            if let Err(e) = proxy::run_proxy(jail, redact, command, args).await {
+                eprintln!("[agentguard] Error: {e}");
+                process::exit(1);
             }
         }
     }
