@@ -1,3 +1,4 @@
+use crate::audit_logger::AuditLogger;
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use tokio::process::Command;
 pub async fn run_proxy(
     jail_root: PathBuf,
     enable_redactor: bool,
+    audit_logger: Arc<AuditLogger>,
     command: String,
     args: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -61,6 +63,8 @@ pub async fn run_proxy(
         }
     });
 
+    let logger_clone = audit_logger.clone();
+
     // Forward child stdout to parent stdout (with optional secret redaction)
     tokio::spawn(async move {
         let mut reader = BufReader::new(child_stdout).lines();
@@ -71,6 +75,11 @@ pub async fn run_proxy(
                     let n = redactor.redact_json(&mut json_val);
                     if n > 0 {
                         eprintln!("[agentguard-redactor] REDACTED {n} secret(s) in stdout payload");
+                        logger_clone.log_event(
+                            "secret_redaction",
+                            "MEDIUM",
+                            &format!("REDACTED {n} secret(s) in stdout payload"),
+                        );
                         if let Ok(redacted_str) = serde_json::to_string(&json_val) {
                             line = redacted_str;
                         }
@@ -79,6 +88,11 @@ pub async fn run_proxy(
                     let (redacted_str, n) = redactor.redact_text(&line);
                     if n > 0 {
                         eprintln!("[agentguard-redactor] REDACTED {n} secret(s) in text payload");
+                        logger_clone.log_event(
+                            "secret_redaction",
+                            "MEDIUM",
+                            &format!("REDACTED {n} secret(s) in text payload"),
+                        );
                         line = redacted_str;
                     }
                 }
@@ -100,7 +114,7 @@ pub async fn run_proxy(
             continue;
         }
 
-        if let Some(err_resp) = handle_incoming_frame(&jail, &line) {
+        if let Some(err_resp) = handle_incoming_frame(&jail, &line, &audit_logger) {
             let mut stdout = tokio::io::stdout();
             let resp_str = serde_json::to_string(&err_resp)?;
             stdout.write_all(format!("{resp_str}\n").as_bytes()).await?;
@@ -121,7 +135,11 @@ pub async fn run_proxy(
     Ok(())
 }
 
-fn handle_incoming_frame(jail: &PathJail, line: &str) -> Option<serde_json::Value> {
+fn handle_incoming_frame(
+    jail: &PathJail,
+    line: &str,
+    logger: &AuditLogger,
+) -> Option<serde_json::Value> {
     let msg: serde_json::Value = serde_json::from_str(line).ok()?;
 
     if msg.get("method").and_then(|m| m.as_str()) != Some("tools/call") {
@@ -133,6 +151,11 @@ fn handle_incoming_frame(jail: &PathJail, line: &str) -> Option<serde_json::Valu
     if let Err(jail_err) = jail.inspect_json_arguments(params) {
         let req_id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
         eprintln!("[agentguard-jail] REJECTED tool call: {jail_err}");
+        logger.log_event(
+            "path_jail_violation",
+            "HIGH",
+            &format!("REJECTED tool call: {jail_err}"),
+        );
 
         let err_resp = serde_json::json!({
             "jsonrpc": "2.0",

@@ -32,3 +32,11 @@
 - [x] Automated sandbox isolation policy generator (`agentguard generate-policy <manifest.json>`).
 - [x] Integration test suite (`tests/fuzzer_test.rs`).
 
+## Completed: Phase 5 — Policy Configuration Engine & Structured Audit Logger
+
+- [x] Implement TOML configuration loader (`agentguard.toml`) (`src/config.rs`).
+- [x] Implement thread-safe structured JSON security audit logger (`src/audit_logger.rs`).
+- [x] Add `--config <PATH>` and `--audit-log <PATH>` options to CLI (`src/main.rs`).
+- [x] Integration test suite (`tests/config_and_logger_test.rs`).
+
+

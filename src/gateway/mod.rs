@@ -1,3 +1,4 @@
+use crate::audit_logger::AuditLogger;
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
 use axum::{
@@ -23,6 +24,7 @@ pub struct GatewayConfig {
     pub rate_limit: Option<u32>,
     pub jail: Option<PathJail>,
     pub redactor: Option<Arc<SecretRedactor>>,
+    pub audit_logger: Arc<AuditLogger>,
 }
 
 #[derive(Clone)]
@@ -63,6 +65,7 @@ struct AppState {
     rate_limiter: Option<RateLimiter>,
     jail: Option<Arc<PathJail>>,
     redactor: Option<Arc<SecretRedactor>>,
+    audit_logger: Arc<AuditLogger>,
     client: reqwest::Client,
 }
 
@@ -77,6 +80,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), Box<dyn std::error
         rate_limiter,
         jail: jail_arc.clone(),
         redactor: config.redactor.clone(),
+        audit_logger: config.audit_logger,
         client: reqwest::Client::builder().build()?,
     };
 
@@ -135,6 +139,11 @@ async fn check_auth_and_rate(
         let expected_auth = format!("Bearer {required_token}");
         if auth_header != Some(&expected_auth) {
             eprintln!("[agentguard-gateway] REJECTED unauthorized request to {path}");
+            state.audit_logger.log_event(
+                "unauthorized_access",
+                "HIGH",
+                &format!("REJECTED unauthorized request to {path}"),
+            );
             return Err((
                 StatusCode::UNAUTHORIZED,
                 "401 Unauthorized: Invalid or missing Bearer token",
@@ -154,6 +163,11 @@ async fn check_auth_and_rate(
         .is_some_and(|limiter| !limiter.check_and_record(client_id))
     {
         eprintln!("[agentguard-gateway] RATE LIMITED client '{client_id}' on {path}");
+        state.audit_logger.log_event(
+            "rate_limit_exceeded",
+            "MEDIUM",
+            &format!("RATE LIMITED client '{client_id}' on {path}"),
+        );
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             "429 Too Many Requests: Rate limit exceeded",
@@ -192,6 +206,7 @@ async fn sse_handler(
 
     let stream = resp.bytes_stream();
     let redactor_opt = state.redactor.clone();
+    let logger_clone = state.audit_logger.clone();
 
     let mapped_stream = stream.map(move |chunk_result| match chunk_result {
         Ok(bytes) => {
@@ -200,6 +215,11 @@ async fn sse_handler(
                 let (redacted_text, count) = redactor.redact_text(&text);
                 if count > 0 {
                     eprintln!("[agentguard-redactor] REDACTED {count} secret(s) in SSE event stream");
+                    logger_clone.log_event(
+                        "secret_redaction",
+                        "MEDIUM",
+                        &format!("REDACTED {count} secret(s) in SSE event stream"),
+                    );
                     Ok(axum::body::Bytes::from(redacted_text))
                 } else {
                     Ok(bytes)
@@ -236,7 +256,7 @@ async fn message_handler(
     if let Some(err_resp) = state
         .jail
         .as_ref()
-        .and_then(|jail| inspect_http_payload(jail, &payload))
+        .and_then(|jail| inspect_http_payload(jail, &payload, &state.audit_logger))
     {
         return Ok((StatusCode::OK, Json(err_resp)).into_response());
     }
@@ -270,6 +290,11 @@ async fn message_handler(
             let count = redactor.redact_json(&mut resp_json);
             if count > 0 {
                 eprintln!("[agentguard-redactor] REDACTED {count} secret(s) in HTTP POST response payload");
+                state.audit_logger.log_event(
+                    "secret_redaction",
+                    "MEDIUM",
+                    &format!("REDACTED {count} secret(s) in HTTP POST response payload"),
+                );
             }
         }
         Ok((status, Json(resp_json)).into_response())
@@ -278,7 +303,11 @@ async fn message_handler(
     }
 }
 
-fn inspect_http_payload(jail: &PathJail, payload: &serde_json::Value) -> Option<serde_json::Value> {
+fn inspect_http_payload(
+    jail: &PathJail,
+    payload: &serde_json::Value,
+    logger: &AuditLogger,
+) -> Option<serde_json::Value> {
     let method = payload.get("method").and_then(|m| m.as_str());
     if method != Some("tools/call") {
         return None;
@@ -289,6 +318,11 @@ fn inspect_http_payload(jail: &PathJail, payload: &serde_json::Value) -> Option<
     if let Err(jail_err) = jail.inspect_json_arguments(tool_params) {
         let req_id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
         eprintln!("[agentguard-jail] REJECTED tool call over HTTP: {jail_err}");
+        logger.log_event(
+            "path_jail_violation",
+            "HIGH",
+            &format!("REJECTED tool call over HTTP: {jail_err}"),
+        );
 
         let err_resp = serde_json::json!({
             "jsonrpc": "2.0",

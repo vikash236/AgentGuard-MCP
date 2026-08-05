@@ -6,12 +6,12 @@
 - Phase 2 (Secret Redactor) **complete**.
 - Phase 3 (HTTP/SSE Gateway Proxy) **complete**.
 - Phase 4 (Fuzzing & Dynamic Sandbox) **complete**.
-- **ALL 5 PROJECT PHASES (P0..P4) FULLY IMPLEMENTED AND VERIFIED.**
-- 46 workspace unit and integration tests passing, 0 clippy warnings.
+- Phase 5 (Policy Config Engine & Audit Logger) **complete**.
+- **ALL 6 EXTENDED PROJECT PHASES (P0..P5) FULLY IMPLEMENTED AND VERIFIED.**
+- 48 workspace unit and integration tests passing, 0 clippy warnings.
 
-## Completed in Phase 4
-- `agentguard-fuzzer` crate (`crates/fuzzer/`): Security payload mutators across 4 attack vectors (Path Traversal, Command Injection, Prompt Injection, Boundary & Null-Byte Stress).
-- `FuzzerEngine`: Dynamically audits tool schemas against mutation vectors and produces human-readable or JSON `FuzzReport` findings.
-- `PolicyGenerator`: Automatically generates recommended `agentguard.toml` security policies based on MCP tool manifest declarations.
-- CLI subcommands: `agentguard fuzz <manifest.json>` and `agentguard generate-policy <manifest.json>`.
-- E2E Integration test (`tests/fuzzer_test.rs`): Tests vulnerability detection and policy file generation.
+## Completed in Phase 5
+- `AgentGuardConfig` (`src/config.rs`): Native TOML policy config loader for `agentguard.toml`.
+- `AuditLogger` (`src/audit_logger.rs`): Thread-safe JSON security event logger recording path traversal rejections, secret redactions, rate limits, and auth failures.
+- CLI subcommands: `agentguard proxy --config <PATH> --audit-log <PATH>` and `agentguard gateway --config <PATH> --audit-log <PATH>`.
+- E2E Integration test (`tests/config_and_logger_test.rs`): Tests TOML config loading and structured JSON audit log creation.

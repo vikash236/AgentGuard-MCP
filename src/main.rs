@@ -1,6 +1,10 @@
+mod audit_logger;
+mod config;
 mod gateway;
 mod proxy;
 
+use audit_logger::AuditLogger;
+use config::AgentGuardConfig;
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
 use clap::{Parser, Subcommand};
@@ -30,11 +34,19 @@ enum Commands {
 
     /// Run stdio JSON-RPC security proxy for an MCP server process.
     Proxy {
+        /// Path to agentguard.toml configuration file.
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Structured JSON audit log file path.
+        #[arg(long)]
+        audit_log: Option<PathBuf>,
+
         /// Path root for path chroot jail.
         #[arg(long, value_name = "PATH")]
-        jail: PathBuf,
+        jail: Option<PathBuf>,
 
-        /// Enable real-time secret redactor (regex + Shannon entropy scanning).
+        /// Enable real-time secret redactor.
         #[arg(long)]
         redact: bool,
 
@@ -49,13 +61,21 @@ enum Commands {
 
     /// Run HTTP/SSE Gateway Proxy for remote MCP servers.
     Gateway {
+        /// Path to agentguard.toml configuration file.
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Structured JSON audit log file path.
+        #[arg(long)]
+        audit_log: Option<PathBuf>,
+
         /// Local port to bind HTTP gateway proxy server.
-        #[arg(long, default_value_t = 8080)]
-        port: u16,
+        #[arg(long)]
+        port: Option<u16>,
 
         /// Target remote MCP server HTTP base URL (e.g. http://127.0.0.1:3000).
         #[arg(long)]
-        target: String,
+        target: Option<String>,
 
         /// Optional Bearer token for client authentication.
         #[arg(long)]
@@ -116,17 +136,66 @@ async fn main() {
             }
         }
         Commands::Proxy {
+            config,
+            audit_log,
             jail,
             redact,
             command,
             args,
         } => {
-            if let Err(e) = proxy::run_proxy(jail, redact, command, args).await {
+            let loaded_config = if let Some(ref cfg_path) = config {
+                match AgentGuardConfig::load_from_file(cfg_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[agentguard] Error loading config '{:?}': {e}", cfg_path);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                AgentGuardConfig::default()
+            };
+
+            // Resolve jail root path
+            let final_jail_path = jail.or_else(|| {
+                loaded_config
+                    .sandbox
+                    .as_ref()
+                    .and_then(|s| s.jail_root.clone())
+            });
+
+            let jail_path = match final_jail_path {
+                Some(p) => p,
+                None => {
+                    eprintln!("[agentguard] Error: --jail <PATH> or [sandbox].jail_root in config is required for proxy mode");
+                    process::exit(1);
+                }
+            };
+
+            // Resolve redactor status
+            let final_redact = redact
+                || loaded_config
+                    .redactor
+                    .as_ref()
+                    .and_then(|r| r.enable_redaction)
+                    .unwrap_or(false);
+
+            // Resolve audit log path
+            let final_log_path = audit_log.or_else(|| {
+                loaded_config
+                    .policy
+                    .as_ref()
+                    .and_then(|p| p.audit_log_file.clone())
+            });
+            let logger = Arc::new(AuditLogger::new(final_log_path));
+
+            if let Err(e) = proxy::run_proxy(jail_path, final_redact, logger, command, args).await {
                 eprintln!("[agentguard] Error: {e}");
                 process::exit(1);
             }
         }
         Commands::Gateway {
+            config,
+            audit_log,
             port,
             target,
             token,
@@ -134,7 +203,47 @@ async fn main() {
             jail,
             redact,
         } => {
-            let jail_obj = if let Some(j_path) = jail {
+            let loaded_config = if let Some(ref cfg_path) = config {
+                match AgentGuardConfig::load_from_file(cfg_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[agentguard] Error loading config '{:?}': {e}", cfg_path);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                AgentGuardConfig::default()
+            };
+
+            let final_port = port.or_else(|| {
+                loaded_config.gateway.as_ref().and_then(|g| g.port)
+            }).unwrap_or(8080);
+
+            let final_target = target.or_else(|| {
+                loaded_config.gateway.as_ref().and_then(|g| g.target_url.clone())
+            });
+
+            let target_url = match final_target {
+                Some(t) => t,
+                None => {
+                    eprintln!("[agentguard] Error: --target <URL> or [gateway].target_url in config is required for gateway mode");
+                    process::exit(1);
+                }
+            };
+
+            let final_token = token.or_else(|| {
+                loaded_config.gateway.as_ref().and_then(|g| g.token.clone())
+            });
+
+            let final_rate_limit = rate_limit.or_else(|| {
+                loaded_config.gateway.as_ref().and_then(|g| g.max_requests_per_minute)
+            });
+
+            let final_jail_path = jail.or_else(|| {
+                loaded_config.sandbox.as_ref().and_then(|s| s.jail_root.clone())
+            });
+
+            let jail_obj = if let Some(j_path) = final_jail_path {
                 match PathJail::new(&j_path) {
                     Ok(j) => Some(j),
                     Err(e) => {
@@ -146,22 +255,38 @@ async fn main() {
                 None
             };
 
-            let redactor_obj = if redact {
+            let final_redact = redact
+                || loaded_config
+                    .redactor
+                    .as_ref()
+                    .and_then(|r| r.enable_redaction)
+                    .unwrap_or(false);
+
+            let redactor_obj = if final_redact {
                 Some(Arc::new(SecretRedactor::new()))
             } else {
                 None
             };
 
-            let config = gateway::GatewayConfig {
-                port,
-                target_url: target,
-                token,
-                rate_limit,
+            let final_log_path = audit_log.or_else(|| {
+                loaded_config
+                    .policy
+                    .as_ref()
+                    .and_then(|p| p.audit_log_file.clone())
+            });
+            let logger = Arc::new(AuditLogger::new(final_log_path));
+
+            let gateway_config = gateway::GatewayConfig {
+                port: final_port,
+                target_url,
+                token: final_token,
+                rate_limit: final_rate_limit,
                 jail: jail_obj,
                 redactor: redactor_obj,
+                audit_logger: logger,
             };
 
-            if let Err(e) = gateway::run_gateway(config).await {
+            if let Err(e) = gateway::run_gateway(gateway_config).await {
                 eprintln!("[agentguard] Gateway error: {e}");
                 process::exit(1);
             }
