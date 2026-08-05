@@ -1,0 +1,13 @@
+[package]
+name = "agentguard-fuzzer"
+version = "0.1.0"
+edition = "2024"
+description = "Automated red-teaming fuzzer and security policy generator for MCP servers"
+license = "MIT"
+
+[dependencies]
+agentguard-auditor = { path = "../auditor" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

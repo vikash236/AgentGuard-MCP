@@ -73,6 +73,26 @@ enum Commands {
         #[arg(long)]
         redact: bool,
     },
+
+    /// Dynamically fuzz an MCP tool manifest against security attack vectors.
+    Fuzz {
+        /// Path to the MCP tool manifest JSON file.
+        manifest: PathBuf,
+
+        /// Output format: "human" (default) or "json".
+        #[arg(long, default_value = "human")]
+        format: String,
+    },
+
+    /// Generate an agentguard.toml security isolation policy for an MCP manifest.
+    GeneratePolicy {
+        /// Path to the MCP tool manifest JSON file.
+        manifest: PathBuf,
+
+        /// Output configuration file path (default stdout).
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -144,6 +164,51 @@ async fn main() {
             if let Err(e) = gateway::run_gateway(config).await {
                 eprintln!("[agentguard] Gateway error: {e}");
                 process::exit(1);
+            }
+        }
+        Commands::Fuzz { manifest, format } => {
+            match agentguard_fuzzer::FuzzerEngine::fuzz_manifest(&manifest) {
+                Ok(report) => {
+                    if format == "json" {
+                        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                    } else {
+                        print!("{}", report.to_human_readable());
+                    }
+                    if report.total_vulnerabilities > 0 {
+                        process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("fuzz error: {e}");
+                    process::exit(2);
+                }
+            }
+        }
+        Commands::GeneratePolicy { manifest, output } => {
+            let contents = match std::fs::read_to_string(&manifest) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error reading manifest: {e}");
+                    process::exit(2);
+                }
+            };
+            let parsed_manifest = match agentguard_auditor::ToolManifest::parse(&contents) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("error parsing manifest: {e}");
+                    process::exit(2);
+                }
+            };
+
+            let policy = agentguard_fuzzer::PolicyGenerator::generate_policy(&parsed_manifest.tools);
+            if let Some(out_path) = output {
+                if let Err(e) = std::fs::write(&out_path, &policy) {
+                    eprintln!("error writing policy file: {e}");
+                    process::exit(2);
+                }
+                eprintln!("[agentguard] Policy generated successfully at '{}'", out_path.display());
+            } else {
+                print!("{policy}");
             }
         }
     }

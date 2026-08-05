@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/auditor",
+    "crates/fuzzer",
     "crates/jail",
     "crates/redactor",
 ]
@@ -19,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 agentguard-auditor = { path = "crates/auditor" }
+agentguard-fuzzer = { path = "crates/fuzzer" }
 agentguard-jail = { path = "crates/jail" }
 agentguard-redactor = { path = "crates/redactor" }
 axum = "0.8"

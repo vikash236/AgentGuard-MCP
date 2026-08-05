@@ -11,11 +11,13 @@ pub mod report;
 pub mod rules;
 pub mod schema;
 
+pub use schema::ToolManifest;
+pub type McpTool = schema::ToolDefinition;
+
 use std::path::Path;
 
 use report::{format_findings_human, format_findings_json, Finding};
 use rules::run_all_rules;
-use schema::ToolManifest;
 
 /// Audit errors.
 #[derive(Debug, thiserror::Error)]

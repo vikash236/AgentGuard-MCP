@@ -26,7 +26,9 @@
 - [x] Implement bearer token authentication (`--token`) and sliding window rate limiting (`--rate-limit`).
 - [x] Integrate path jail (`--jail`) and secret redactor (`--redact`) into HTTP gateway pipeline.
 
-## Next Phase: Phase 4 — Fuzzing & Dynamic Sandbox
+## Completed: Phase 4 — Fuzzing & Dynamic Sandbox
 
-- [ ] Automated red-teaming tool feeding path traversal and injection payloads.
-- [ ] Sandbox isolation policy generator.
+- [x] Automated red-teaming tool feeding path traversal, command injection, prompt injection, and boundary stress payloads (`crates/fuzzer/`).
+- [x] Automated sandbox isolation policy generator (`agentguard generate-policy <manifest.json>`).
+- [x] Integration test suite (`tests/fuzzer_test.rs`).
+

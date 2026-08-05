@@ -7,6 +7,7 @@ name = "agentguard"
 version = "0.1.0"
 dependencies = [
  "agentguard-auditor",
+ "agentguard-fuzzer",
  "agentguard-jail",
  "agentguard-redactor",
  "axum",
@@ -26,6 +27,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "agentguard-fuzzer"
+version = "0.1.0"
+dependencies = [
+ "agentguard-auditor",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

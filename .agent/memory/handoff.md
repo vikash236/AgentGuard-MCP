@@ -1,20 +1,17 @@
 # Context Handoff Contract
 
 ## Current Status
-- Phase 0 (Static Manifest Auditor) **complete**. Fully functional `agentguard audit` CLI.
-- Phase 1 (Stdio Proxy & Path Jail) **complete**. Fully functional `agentguard proxy` CLI with path chrooting.
-- Phase 2 (Secret Redactor) **complete**. Fully functional real-time secret payload redactor with `--redact` flag.
-- Phase 3 (HTTP/SSE Gateway Proxy) **complete**. Fully functional `agentguard gateway` HTTP proxy with auth & rate limiting.
-- 44 workspace unit and integration tests passing, 0 clippy warnings.
+- Phase 0 (Static Manifest Auditor) **complete**.
+- Phase 1 (Stdio Proxy & Path Jail) **complete**.
+- Phase 2 (Secret Redactor) **complete**.
+- Phase 3 (HTTP/SSE Gateway Proxy) **complete**.
+- Phase 4 (Fuzzing & Dynamic Sandbox) **complete**.
+- **ALL 5 PROJECT PHASES (P0..P4) FULLY IMPLEMENTED AND VERIFIED.**
+- 46 workspace unit and integration tests passing, 0 clippy warnings.
 
-## Completed in Phase 3
-- `src/gateway/`: HTTP/SSE Gateway Proxy engine built on Axum 0.8 and Reqwest.
-- Bearer Token Auth (`--token`): Rejects unauthorized HTTP requests with `401 Unauthorized`.
-- Rate Limiting (`--rate-limit`): Sliding-window token bucket algorithm; returns `429 Too Many Requests` when exceeded.
-- SSE Stream & POST Message Interceptor: Forwards requests and streams response events while applying `PathJail` and `SecretRedactor`.
-- CLI subcommand: `agentguard gateway --port <PORT> --target <URL> [--token <SECRET>] [--rate-limit <N>] [--jail <PATH>] [--redact]`.
-- E2E Integration test (`tests/gateway_test.rs`): Tests auth, rate limiting, and HTTP POST proxying.
-
-## Next Steps (Phase 4: Fuzzing & Dynamic Sandbox)
-- Build automated red-teaming tool feeding path traversal and injection payloads.
-- Implement sandbox isolation policy generator.
+## Completed in Phase 4
+- `agentguard-fuzzer` crate (`crates/fuzzer/`): Security payload mutators across 4 attack vectors (Path Traversal, Command Injection, Prompt Injection, Boundary & Null-Byte Stress).
+- `FuzzerEngine`: Dynamically audits tool schemas against mutation vectors and produces human-readable or JSON `FuzzReport` findings.
+- `PolicyGenerator`: Automatically generates recommended `agentguard.toml` security policies based on MCP tool manifest declarations.
+- CLI subcommands: `agentguard fuzz <manifest.json>` and `agentguard generate-policy <manifest.json>`.
+- E2E Integration test (`tests/fuzzer_test.rs`): Tests vulnerability detection and policy file generation.
