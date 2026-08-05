@@ -4,15 +4,17 @@
 - Phase 0 (Static Manifest Auditor) **complete**. Fully functional `agentguard audit` CLI.
 - Phase 1 (Stdio Proxy & Path Jail) **complete**. Fully functional `agentguard proxy` CLI with path chrooting.
 - Phase 2 (Secret Redactor) **complete**. Fully functional real-time secret payload redactor with `--redact` flag.
-- 43 workspace unit and integration tests passing, 0 clippy warnings.
+- Phase 3 (HTTP/SSE Gateway Proxy) **complete**. Fully functional `agentguard gateway` HTTP proxy with auth & rate limiting.
+- 44 workspace unit and integration tests passing, 0 clippy warnings.
 
-## Completed in Phase 2
-- `agentguard-redactor` crate: Pre-compiled regex patterns (AWS, OpenAI, GitHub, JWT, RSA/SSH private keys, `.env` key-value pairs) and Shannon entropy evaluator (`entropy.rs`).
-- Recursive JSON & text payload redactor (`SecretRedactor::redact_text` & `SecretRedactor::redact_json`).
-- Proxy Integration (`src/proxy/mod.rs`): Real-time secret masking for stdout response frames when `agentguard proxy --redact` is enabled.
-- CLI subcommand: `agentguard proxy --jail <PATH> --redact -- <COMMAND> [ARGS...]`.
-- E2E Integration test (`tests/redactor_test.rs`): Verifies secret masking (`[REDACTED]`) in stdout response streams.
+## Completed in Phase 3
+- `src/gateway/`: HTTP/SSE Gateway Proxy engine built on Axum 0.8 and Reqwest.
+- Bearer Token Auth (`--token`): Rejects unauthorized HTTP requests with `401 Unauthorized`.
+- Rate Limiting (`--rate-limit`): Sliding-window token bucket algorithm; returns `429 Too Many Requests` when exceeded.
+- SSE Stream & POST Message Interceptor: Forwards requests and streams response events while applying `PathJail` and `SecretRedactor`.
+- CLI subcommand: `agentguard gateway --port <PORT> --target <URL> [--token <SECRET>] [--rate-limit <N>] [--jail <PATH>] [--redact]`.
+- E2E Integration test (`tests/gateway_test.rs`): Tests auth, rate limiting, and HTTP POST proxying.
 
-## Next Steps (Phase 3: HTTP/SSE Gateway Proxy)
-- Support remote MCP servers over Server-Sent Events (SSE) / HTTP websockets.
-- Implement bearer token authorization and request rate limiting.
+## Next Steps (Phase 4: Fuzzing & Dynamic Sandbox)
+- Build automated red-teaming tool feeding path traversal and injection payloads.
+- Implement sandbox isolation policy generator.

@@ -20,7 +20,13 @@
 - [x] Add masking support (`[REDACTED]`) for sensitive credentials/keys (`.env` keys, API tokens, JWT, RSA/SSH keys).
 - [x] Integrate redactor into proxy stdio pipeline (`agentguard proxy --redact`).
 
-## Next Phase: Phase 3 — HTTP/SSE Gateway Proxy
+## Completed: Phase 3 — HTTP/SSE Gateway Proxy
 
-- [ ] Support remote MCP servers over SSE / HTTP websockets proxy.
-- [ ] Implement bearer token authentication and rate limiting.
+- [x] Support remote MCP servers over SSE / HTTP websockets proxy (`src/gateway/`).
+- [x] Implement bearer token authentication (`--token`) and sliding window rate limiting (`--rate-limit`).
+- [x] Integrate path jail (`--jail`) and secret redactor (`--redact`) into HTTP gateway pipeline.
+
+## Next Phase: Phase 4 — Fuzzing & Dynamic Sandbox
+
+- [ ] Automated red-teaming tool feeding path traversal and injection payloads.
+- [ ] Sandbox isolation policy generator.
