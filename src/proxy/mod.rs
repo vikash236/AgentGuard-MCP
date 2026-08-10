@@ -1,4 +1,7 @@
 use crate::audit_logger::AuditLogger;
+use crate::metrics::SharedMetrics;
+use crate::policy_engine::PolicyEngine;
+use crate::prompt_firewall::PromptFirewall;
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
 use std::path::PathBuf;
@@ -8,10 +11,14 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 /// Run the Stdio JSON-RPC proxy for an MCP server subprocess.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_proxy(
     jail_root: PathBuf,
     enable_redactor: bool,
     audit_logger: Arc<AuditLogger>,
+    metrics: Option<SharedMetrics>,
+    policy_engine: Option<Arc<PolicyEngine>>,
+    prompt_firewall: Option<Arc<PromptFirewall>>,
     command: String,
     args: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -22,6 +29,15 @@ pub async fn run_proxy(
     );
     if enable_redactor {
         eprintln!("[agentguard] Secret redactor ENABLED (regex + Shannon entropy scanner active)");
+    }
+    if metrics.is_some() {
+        eprintln!("[agentguard] Metrics Collector ENABLED");
+    }
+    if policy_engine.is_some() {
+        eprintln!("[agentguard] Policy Engine ENABLED");
+    }
+    if prompt_firewall.is_some() {
+        eprintln!("[agentguard] Prompt Injection Firewall ENABLED");
     }
     eprintln!(
         "[agentguard] Spawning MCP server: {} {}",
@@ -64,6 +80,7 @@ pub async fn run_proxy(
     });
 
     let logger_clone = audit_logger.clone();
+    let metrics_clone_stdout = metrics.clone();
 
     // Forward child stdout to parent stdout (with optional secret redaction)
     tokio::spawn(async move {
@@ -80,6 +97,9 @@ pub async fn run_proxy(
                             "MEDIUM",
                             &format!("REDACTED {n} secret(s) in stdout payload"),
                         );
+                        if let Some(ref m) = metrics_clone_stdout {
+                            m.inc_redactions();
+                        }
                         if let Ok(redacted_str) = serde_json::to_string(&json_val) {
                             line = redacted_str;
                         }
@@ -93,6 +113,9 @@ pub async fn run_proxy(
                             "MEDIUM",
                             &format!("REDACTED {n} secret(s) in text payload"),
                         );
+                        if let Some(ref m) = metrics_clone_stdout {
+                            m.inc_redactions();
+                        }
                         line = redacted_str;
                     }
                 }
@@ -114,7 +137,18 @@ pub async fn run_proxy(
             continue;
         }
 
-        if let Some(err_resp) = handle_incoming_frame(&jail, &line, &audit_logger) {
+        if let Some(ref m) = metrics {
+            m.inc_requests();
+        }
+
+        if let Some(err_resp) = handle_incoming_frame(
+            &jail,
+            &line,
+            &audit_logger,
+            metrics.as_ref(),
+            policy_engine.as_deref(),
+            prompt_firewall.as_deref(),
+        ) {
             let mut stdout = tokio::io::stdout();
             let resp_str = serde_json::to_string(&err_resp)?;
             stdout.write_all(format!("{resp_str}\n").as_bytes()).await?;
@@ -139,6 +173,9 @@ fn handle_incoming_frame(
     jail: &PathJail,
     line: &str,
     logger: &AuditLogger,
+    metrics: Option<&SharedMetrics>,
+    policy_engine: Option<&PolicyEngine>,
+    prompt_firewall: Option<&PromptFirewall>,
 ) -> Option<serde_json::Value> {
     let msg: serde_json::Value = serde_json::from_str(line).ok()?;
 
@@ -147,15 +184,68 @@ fn handle_incoming_frame(
     }
 
     let params = msg.get("params")?;
+    let req_id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
 
+    // 1. Evaluate Prompt Injection Firewall
+    if let Some(attack_reason) = prompt_firewall.and_then(|f| f.inspect_payload(params)) {
+        eprintln!("[agentguard-firewall] BLOCKED Prompt Injection attack: {attack_reason}");
+        logger.log_event(
+            "prompt_injection_blocked",
+            "CRITICAL",
+            &format!("BLOCKED Prompt Injection attack: {attack_reason}"),
+        );
+        if let Some(m) = metrics {
+            m.inc_prompt_injections();
+        }
+
+        let err_resp = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {
+                "code": -32602,
+                "message": format!("PromptInjectionBlocked: {attack_reason}")
+            }
+        });
+        return Some(err_resp);
+    }
+
+    // 2. Evaluate Policy Engine (allowed/denied tools, argument regex rules)
+    if let Some(engine) = policy_engine {
+        let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if let Err(policy_err) = engine.evaluate_tool_call(tool_name, params) {
+            eprintln!("[agentguard-policy] REJECTED tool call '{tool_name}': {policy_err}");
+            logger.log_event(
+                "policy_violation",
+                "HIGH",
+                &format!("REJECTED tool call '{tool_name}': {policy_err}"),
+            );
+            if let Some(m) = metrics {
+                m.inc_policy_violations();
+            }
+
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": format!("PolicyViolation: {policy_err}")
+                }
+            });
+            return Some(err_resp);
+        }
+    }
+
+    // 2. Evaluate Path Jail
     if let Err(jail_err) = jail.inspect_json_arguments(params) {
-        let req_id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
         eprintln!("[agentguard-jail] REJECTED tool call: {jail_err}");
         logger.log_event(
             "path_jail_violation",
             "HIGH",
             &format!("REJECTED tool call: {jail_err}"),
         );
+        if let Some(m) = metrics {
+            m.inc_jail_violations();
+        }
 
         let err_resp = serde_json::json!({
             "jsonrpc": "2.0",

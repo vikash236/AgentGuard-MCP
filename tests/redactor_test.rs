@@ -73,5 +73,6 @@ fn test_proxy_redacts_stdout_secrets() {
 
     drop(stdin);
     let _ = child.kill();
+    let _ = child.wait();
     let _ = fs::remove_dir_all(&temp_root);
 }

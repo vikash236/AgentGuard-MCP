@@ -88,5 +88,6 @@ fn test_proxy_blocks_path_traversal() {
 
     drop(stdin);
     let _ = child.kill();
+    let _ = child.wait();
     let _ = fs::remove_dir_all(&temp_root);
 }

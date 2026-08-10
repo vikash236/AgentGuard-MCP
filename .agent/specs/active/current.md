@@ -39,4 +39,31 @@
 - [x] Add `--config <PATH>` and `--audit-log <PATH>` options to CLI (`src/main.rs`).
 - [x] Integration test suite (`tests/config_and_logger_test.rs`).
 
+## Completed: Phase 6 — Test Hygiene, Dynamic Hot-Reload & Prometheus Metrics
+
+- [x] Fix child process cleanup (`.wait()`) across test files to eliminate `clippy::zombie_processes` warnings.
+- [x] Implement thread-safe telemetry metrics collector (`src/metrics.rs`).
+- [x] Add dynamic policy configuration reload helper (`src/config.rs`).
+- [x] Expose `/metrics` Prometheus endpoint in HTTP Gateway & telemetry in stdio proxy (`src/gateway/mod.rs`, `src/proxy/mod.rs`, `src/main.rs`).
+- [x] Add integration test suite (`tests/metrics_and_hot_reload_test.rs`).
+
+## Completed: Phase 7 — Dynamic Tool Call Policy Engine & Argument Guardrails
+
+- [x] Implement `PolicyEngine` struct (`src/policy_engine.rs`) for tool allowlists, blocklists, and argument regex constraints.
+- [x] Extend `PolicyConfigSection` (`src/config.rs`) with `denied_tools` and `argument_rules`.
+- [x] Add `policy_violations_count` telemetry counter (`src/metrics.rs`).
+- [x] Integrate policy engine evaluation into stdio proxy (`src/proxy/mod.rs`) and HTTP gateway (`src/gateway/mod.rs`).
+- [x] Add E2E integration test suite (`tests/policy_engine_test.rs`).
+
+## Completed: Phase 8 — Prompt Injection Firewall & LLM Guardrails
+
+- [x] Implement `PromptFirewall` struct (`src/prompt_firewall.rs`) with pre-compiled regex set and payload string walker.
+- [x] Add `PromptFirewallConfigSection` (`src/config.rs`) for custom injection detection rules.
+- [x] Add `prompt_injections_count` telemetry counter (`src/metrics.rs`).
+- [x] Integrate prompt firewall inspection into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
+- [x] Add E2E integration test suite (`tests/prompt_firewall_test.rs`).
+
+
+
+
 

@@ -7,11 +7,18 @@
 - Phase 3 (HTTP/SSE Gateway Proxy) **complete**.
 - Phase 4 (Fuzzing & Dynamic Sandbox) **complete**.
 - Phase 5 (Policy Config Engine & Audit Logger) **complete**.
-- **ALL 6 EXTENDED PROJECT PHASES (P0..P5) FULLY IMPLEMENTED AND VERIFIED.**
-- 48 workspace unit and integration tests passing, 0 clippy warnings.
+- Phase 6 (Test Hygiene, Config Hot-Reload & Prometheus Metrics) **complete**.
+- Phase 7 (Dynamic Tool Call Policy Engine & Argument Guardrails) **complete**.
+- Phase 8 (Prompt Injection Firewall & LLM Guardrails) **complete**.
+- **ALL 9 EXTENDED PROJECT PHASES (P0..P8) FULLY IMPLEMENTED AND VERIFIED.**
+- 55 workspace unit and integration tests passing, 0 clippy warnings.
 
-## Completed in Phase 5
-- `AgentGuardConfig` (`src/config.rs`): Native TOML policy config loader for `agentguard.toml`.
-- `AuditLogger` (`src/audit_logger.rs`): Thread-safe JSON security event logger recording path traversal rejections, secret redactions, rate limits, and auth failures.
-- CLI subcommands: `agentguard proxy --config <PATH> --audit-log <PATH>` and `agentguard gateway --config <PATH> --audit-log <PATH>`.
-- E2E Integration test (`tests/config_and_logger_test.rs`): Tests TOML config loading and structured JSON audit log creation.
+## Completed in Phase 8
+- `PromptFirewall` (`src/prompt_firewall.rs`): Real-time prompt injection scanner checking for instruction overrides, system prompt extractions, jailbreak personas, and ChatML/Llama delimiter hijacking.
+- `PromptFirewallConfigSection` (`src/config.rs`): Config section supporting custom patterns.
+- Telemetry: Added `prompt_injections_count` counter to `MetricsCollector` (`src/metrics.rs`).
+- Stdio & Gateway Interception: Integrated prompt firewall inspection into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
+- E2E Integration test (`tests/prompt_firewall_test.rs`).
+
+
+

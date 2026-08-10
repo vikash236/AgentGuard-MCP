@@ -1,4 +1,7 @@
 use crate::audit_logger::AuditLogger;
+use crate::metrics::SharedMetrics;
+use crate::policy_engine::PolicyEngine;
+use crate::prompt_firewall::PromptFirewall;
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
 use axum::{
@@ -25,6 +28,9 @@ pub struct GatewayConfig {
     pub jail: Option<PathJail>,
     pub redactor: Option<Arc<SecretRedactor>>,
     pub audit_logger: Arc<AuditLogger>,
+    pub metrics: Option<SharedMetrics>,
+    pub policy_engine: Option<Arc<PolicyEngine>>,
+    pub prompt_firewall: Option<Arc<PromptFirewall>>,
 }
 
 #[derive(Clone)]
@@ -66,6 +72,9 @@ struct AppState {
     jail: Option<Arc<PathJail>>,
     redactor: Option<Arc<SecretRedactor>>,
     audit_logger: Arc<AuditLogger>,
+    metrics: Option<SharedMetrics>,
+    policy_engine: Option<Arc<PolicyEngine>>,
+    prompt_firewall: Option<Arc<PromptFirewall>>,
     client: reqwest::Client,
 }
 
@@ -81,6 +90,9 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), Box<dyn std::error
         jail: jail_arc.clone(),
         redactor: config.redactor.clone(),
         audit_logger: config.audit_logger,
+        metrics: config.metrics,
+        policy_engine: config.policy_engine,
+        prompt_firewall: config.prompt_firewall,
         client: reqwest::Client::builder().build()?,
     };
 
@@ -105,11 +117,21 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), Box<dyn std::error
     if state.redactor.is_some() {
         eprintln!("[agentguard] Secret Redactor ACTIVE");
     }
+    if state.metrics.is_some() {
+        eprintln!("[agentguard] Metrics Collector ACTIVE at GET /metrics");
+    }
+    if state.policy_engine.is_some() {
+        eprintln!("[agentguard] Policy Engine ACTIVE");
+    }
+    if state.prompt_firewall.is_some() {
+        eprintln!("[agentguard] Prompt Injection Firewall ACTIVE");
+    }
 
     let app = Router::new()
         .route("/", get(health_handler))
         .route("/sse", get(sse_handler))
         .route("/message", post(message_handler))
+        .route("/metrics", get(metrics_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
@@ -125,11 +147,31 @@ async fn health_handler() -> Json<serde_json::Value> {
     }))
 }
 
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(ref m) = state.metrics {
+        (
+            StatusCode::OK,
+            [("content-type", "text/plain; version=0.0.4")],
+            m.to_prometheus(),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            [("content-type", "text/plain")],
+            "Metrics not enabled\n".to_string(),
+        )
+    }
+}
+
 async fn check_auth_and_rate(
     headers: &HeaderMap,
     state: &AppState,
     path: &str,
 ) -> Result<String, (StatusCode, &'static str)> {
+    if let Some(ref m) = state.metrics {
+        m.inc_requests();
+    }
+
     // 1. Bearer Token Auth
     if let Some(ref required_token) = state.token {
         let auth_header = headers
@@ -144,6 +186,9 @@ async fn check_auth_and_rate(
                 "HIGH",
                 &format!("REJECTED unauthorized request to {path}"),
             );
+            if let Some(ref m) = state.metrics {
+                m.inc_auth_failures();
+            }
             return Err((
                 StatusCode::UNAUTHORIZED,
                 "401 Unauthorized: Invalid or missing Bearer token",
@@ -168,6 +213,9 @@ async fn check_auth_and_rate(
             "MEDIUM",
             &format!("RATE LIMITED client '{client_id}' on {path}"),
         );
+        if let Some(ref m) = state.metrics {
+            m.inc_rate_limit_rejections();
+        }
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             "429 Too Many Requests: Rate limit exceeded",
@@ -252,12 +300,15 @@ async fn message_handler(
 ) -> Result<Response, (StatusCode, &'static str)> {
     check_auth_and_rate(&headers, &state, "/message").await?;
 
-    // 1. Path Jail Inspection for tools/call
-    if let Some(err_resp) = state
-        .jail
-        .as_ref()
-        .and_then(|jail| inspect_http_payload(jail, &payload, &state.audit_logger))
-    {
+    // 1. Path Jail & Policy Engine Inspection for tools/call
+    if let Some(err_resp) = inspect_http_payload(
+        state.jail.as_deref(),
+        state.policy_engine.as_deref(),
+        state.prompt_firewall.as_deref(),
+        &payload,
+        &state.audit_logger,
+        state.metrics.as_ref(),
+    ) {
         return Ok((StatusCode::OK, Json(err_resp)).into_response());
     }
 
@@ -304,9 +355,12 @@ async fn message_handler(
 }
 
 fn inspect_http_payload(
-    jail: &PathJail,
+    jail: Option<&PathJail>,
+    policy_engine: Option<&PolicyEngine>,
+    prompt_firewall: Option<&PromptFirewall>,
     payload: &serde_json::Value,
     logger: &AuditLogger,
+    metrics: Option<&SharedMetrics>,
 ) -> Option<serde_json::Value> {
     let method = payload.get("method").and_then(|m| m.as_str());
     if method != Some("tools/call") {
@@ -314,15 +368,68 @@ fn inspect_http_payload(
     }
 
     let tool_params = payload.get("params")?;
+    let req_id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
 
-    if let Err(jail_err) = jail.inspect_json_arguments(tool_params) {
-        let req_id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+    // 1. Evaluate Prompt Injection Firewall
+    if let Some(attack_reason) = prompt_firewall.and_then(|f| f.inspect_payload(tool_params)) {
+        eprintln!("[agentguard-firewall] BLOCKED Prompt Injection attack over HTTP: {attack_reason}");
+        logger.log_event(
+            "prompt_injection_blocked",
+            "CRITICAL",
+            &format!("BLOCKED Prompt Injection attack over HTTP: {attack_reason}"),
+        );
+        if let Some(m) = metrics {
+            m.inc_prompt_injections();
+        }
+
+        let err_resp = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {
+                "code": -32602,
+                "message": format!("PromptInjectionBlocked: {attack_reason}")
+            }
+        });
+        return Some(err_resp);
+    }
+
+    // 2. Evaluate Policy Engine
+    if let Some(engine) = policy_engine {
+        let tool_name = tool_params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if let Err(policy_err) = engine.evaluate_tool_call(tool_name, tool_params) {
+            eprintln!("[agentguard-policy] REJECTED tool call over HTTP: {policy_err}");
+            logger.log_event(
+                "policy_violation",
+                "HIGH",
+                &format!("REJECTED tool call over HTTP: {policy_err}"),
+            );
+            if let Some(m) = metrics {
+                m.inc_policy_violations();
+            }
+
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": format!("PolicyViolation: {policy_err}")
+                }
+            });
+            return Some(err_resp);
+        }
+    }
+
+    // 2. Evaluate Path Jail
+    if let Some(Err(jail_err)) = jail.map(|j| j.inspect_json_arguments(tool_params)) {
         eprintln!("[agentguard-jail] REJECTED tool call over HTTP: {jail_err}");
         logger.log_event(
             "path_jail_violation",
             "HIGH",
             &format!("REJECTED tool call over HTTP: {jail_err}"),
         );
+        if let Some(m) = metrics {
+            m.inc_jail_violations();
+        }
 
         let err_resp = serde_json::json!({
             "jsonrpc": "2.0",

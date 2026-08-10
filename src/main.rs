@@ -1,13 +1,19 @@
 mod audit_logger;
 mod config;
 mod gateway;
+mod metrics;
+mod policy_engine;
+mod prompt_firewall;
 mod proxy;
 
-use audit_logger::AuditLogger;
-use config::AgentGuardConfig;
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
+use audit_logger::AuditLogger;
 use clap::{Parser, Subcommand};
+use config::AgentGuardConfig;
+use metrics::MetricsCollector;
+use policy_engine::PolicyEngine;
+use prompt_firewall::PromptFirewall;
 use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
@@ -49,6 +55,14 @@ enum Commands {
         /// Enable real-time secret redactor.
         #[arg(long)]
         redact: bool,
+
+        /// Enable metrics collector.
+        #[arg(long)]
+        metrics: bool,
+
+        /// Enable prompt injection firewall.
+        #[arg(long)]
+        prompt_firewall: bool,
 
         /// Executable command to launch MCP server.
         #[arg(required = true)]
@@ -92,6 +106,14 @@ enum Commands {
         /// Enable real-time secret redactor.
         #[arg(long)]
         redact: bool,
+
+        /// Enable metrics endpoint.
+        #[arg(long)]
+        metrics: bool,
+
+        /// Enable prompt injection firewall.
+        #[arg(long)]
+        prompt_firewall: bool,
     },
 
     /// Dynamically fuzz an MCP tool manifest against security attack vectors.
@@ -140,6 +162,8 @@ async fn main() {
             audit_log,
             jail,
             redact,
+            metrics,
+            prompt_firewall,
             command,
             args,
         } => {
@@ -187,8 +211,59 @@ async fn main() {
                     .and_then(|p| p.audit_log_file.clone())
             });
             let logger = Arc::new(AuditLogger::new(final_log_path));
+            let metrics_collector = if metrics {
+                Some(Arc::new(MetricsCollector::new()))
+            } else {
+                None
+            };
 
-            if let Err(e) = proxy::run_proxy(jail_path, final_redact, logger, command, args).await {
+            let policy_engine_obj = if let Some(ref p) = loaded_config.policy {
+                match PolicyEngine::new(p) {
+                    Ok(pe) => Some(Arc::new(pe)),
+                    Err(e) => {
+                        eprintln!("[agentguard] Error in policy engine rules: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            let enable_firewall = prompt_firewall
+                || loaded_config
+                    .prompt_firewall
+                    .as_ref()
+                    .and_then(|pf| pf.enable_firewall)
+                    .unwrap_or(false);
+
+            let prompt_firewall_obj = if enable_firewall {
+                let custom_pats = loaded_config
+                    .prompt_firewall
+                    .as_ref()
+                    .and_then(|pf| pf.custom_patterns.as_deref());
+                match PromptFirewall::new(custom_pats) {
+                    Ok(pf) => Some(Arc::new(pf)),
+                    Err(e) => {
+                        eprintln!("[agentguard] Error in prompt firewall patterns: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            if let Err(e) = proxy::run_proxy(
+                jail_path,
+                final_redact,
+                logger,
+                metrics_collector,
+                policy_engine_obj,
+                prompt_firewall_obj,
+                command,
+                args,
+            )
+            .await
+            {
                 eprintln!("[agentguard] Error: {e}");
                 process::exit(1);
             }
@@ -202,6 +277,8 @@ async fn main() {
             rate_limit,
             jail,
             redact,
+            metrics,
+            prompt_firewall,
         } => {
             let loaded_config = if let Some(ref cfg_path) = config {
                 match AgentGuardConfig::load_from_file(cfg_path) {
@@ -275,6 +352,46 @@ async fn main() {
                     .and_then(|p| p.audit_log_file.clone())
             });
             let logger = Arc::new(AuditLogger::new(final_log_path));
+            let metrics_collector = if metrics {
+                Some(Arc::new(MetricsCollector::new()))
+            } else {
+                None
+            };
+
+            let policy_engine_obj = if let Some(ref p) = loaded_config.policy {
+                match PolicyEngine::new(p) {
+                    Ok(pe) => Some(Arc::new(pe)),
+                    Err(e) => {
+                        eprintln!("[agentguard] Error in policy engine rules: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            let enable_firewall = prompt_firewall
+                || loaded_config
+                    .prompt_firewall
+                    .as_ref()
+                    .and_then(|pf| pf.enable_firewall)
+                    .unwrap_or(false);
+
+            let prompt_firewall_obj = if enable_firewall {
+                let custom_pats = loaded_config
+                    .prompt_firewall
+                    .as_ref()
+                    .and_then(|pf| pf.custom_patterns.as_deref());
+                match PromptFirewall::new(custom_pats) {
+                    Ok(pf) => Some(Arc::new(pf)),
+                    Err(e) => {
+                        eprintln!("[agentguard] Error in prompt firewall patterns: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
 
             let gateway_config = gateway::GatewayConfig {
                 port: final_port,
@@ -284,6 +401,9 @@ async fn main() {
                 jail: jail_obj,
                 redactor: redactor_obj,
                 audit_logger: logger,
+                metrics: metrics_collector,
+                policy_engine: policy_engine_obj,
+                prompt_firewall: prompt_firewall_obj,
             };
 
             if let Err(e) = gateway::run_gateway(gateway_config).await {

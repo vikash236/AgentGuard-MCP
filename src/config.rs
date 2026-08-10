@@ -22,10 +22,20 @@ pub struct GatewayConfigSection {
     pub max_requests_per_minute: Option<u32>,
 }
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PolicyConfigSection {
     pub audit_log_file: Option<PathBuf>,
     pub allowed_tools: Option<Vec<String>>,
+    pub denied_tools: Option<Vec<String>>,
+    pub argument_rules: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PromptFirewallConfigSection {
+    pub enable_firewall: Option<bool>,
+    pub custom_patterns: Option<Vec<String>>,
 }
 
 /// Native TOML Configuration structure for AgentGuard-MCP (`agentguard.toml`).
@@ -35,6 +45,7 @@ pub struct AgentGuardConfig {
     pub redactor: Option<RedactorConfigSection>,
     pub gateway: Option<GatewayConfigSection>,
     pub policy: Option<PolicyConfigSection>,
+    pub prompt_firewall: Option<PromptFirewallConfigSection>,
 }
 
 impl AgentGuardConfig {
@@ -43,6 +54,24 @@ impl AgentGuardConfig {
         let contents = std::fs::read_to_string(path)?;
         let config: AgentGuardConfig = toml::from_str(&contents)?;
         Ok(config)
+    }
+
+    /// Check file modification timestamp and reload if updated.
+    #[allow(dead_code)]
+    pub fn reload_if_modified(
+        path: &Path,
+        last_modified: &mut Option<std::time::SystemTime>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+        let metadata = std::fs::metadata(path)?;
+        let modified = metadata.modified()?;
+
+        if last_modified.as_ref() == Some(&modified) {
+            return Ok(None);
+        }
+
+        *last_modified = Some(modified);
+        let new_config = Self::load_from_file(path)?;
+        Ok(Some(new_config))
     }
 }
 

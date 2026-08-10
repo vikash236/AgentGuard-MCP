@@ -8,3 +8,6 @@
 | **P3** | HTTP/SSE Gateway Proxy | Support for remote MCP servers over SSE / HTTP web sockets | Complete |
 | **P4** | Fuzzing & Dynamic Sandbox | Automated red-teaming tool feeding path traversal and injection payloads | Complete |
 | **P5** | Policy Config Engine & Audit Logger | Native TOML configuration parser and structured JSON security event logging | Complete |
+| **P6** | Prometheus Metrics & Dynamic Hot-Reload | Real-time Prometheus/JSON metrics endpoint and dynamic policy hot-reloading | Complete |
+| **P7** | Dynamic Tool Call Policy Engine | Runtime authorization enforcement, tool allowlists/blocklists, & parameter regex guardrails | Complete |
+| **P8** | Prompt Injection Firewall | LLM payload security inspection, jailbreak interception, & prompt override detection | Complete |

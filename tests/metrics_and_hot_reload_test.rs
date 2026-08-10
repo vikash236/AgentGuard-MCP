@@ -24,17 +24,15 @@ async fn mock_target_server(port: u16) {
 }
 
 #[tokio::test]
-async fn test_gateway_auth_and_rate_limit() {
-    let mock_port = 3099;
-    let gateway_port = 8089;
+async fn test_gateway_metrics_endpoint() {
+    let mock_port = 3199;
+    let gateway_port = 8189;
 
-    // Start mock target server
     tokio::spawn(async move {
         mock_target_server(mock_port).await;
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Build binary
     let build_status = Command::new("cargo")
         .args(["build", "--bin", "agentguard"])
         .status()
@@ -47,7 +45,6 @@ async fn test_gateway_auth_and_rate_limit() {
         "target/debug/agentguard"
     };
 
-    // Launch gateway proxy with token and rate limit 2 req/min
     let mut child = Command::new(exe_path)
         .args([
             "gateway",
@@ -55,21 +52,19 @@ async fn test_gateway_auth_and_rate_limit() {
             &gateway_port.to_string(),
             "--target",
             &format!("http://127.0.0.1:{mock_port}"),
-            "--token",
-            "secrettoken123",
-            "--rate-limit",
-            "2",
+            "--metrics",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to start agentguard gateway");
+        .expect("Failed to start agentguard gateway with metrics");
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let client = reqwest::Client::new();
     let msg_url = format!("http://127.0.0.1:{gateway_port}/message");
+    let metrics_url = format!("http://127.0.0.1:{gateway_port}/metrics");
 
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
@@ -77,41 +72,14 @@ async fn test_gateway_auth_and_rate_limit() {
         "method": "ping"
     });
 
-    // Test 1: Missing Bearer Token -> 401 Unauthorized
-    let resp1 = client.post(&msg_url).json(&payload).send().await.unwrap();
-    assert_eq!(resp1.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let resp = client.post(&msg_url).json(&payload).send().await.unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-    // Test 2: Valid Bearer Token (1st request) -> 200 OK
-    let resp2 = client
-        .post(&msg_url)
-        .header("Authorization", "Bearer secrettoken123")
-        .json(&payload)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp2.status(), reqwest::StatusCode::OK);
-    let body2: serde_json::Value = resp2.json().await.unwrap();
-    assert_eq!(body2["result"]["status"], "ok_from_target");
+    let metrics_resp = client.get(&metrics_url).send().await.unwrap();
+    assert_eq!(metrics_resp.status(), reqwest::StatusCode::OK);
 
-    // Test 3: Valid Bearer Token (2nd request) -> 200 OK
-    let resp3 = client
-        .post(&msg_url)
-        .header("Authorization", "Bearer secrettoken123")
-        .json(&payload)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp3.status(), reqwest::StatusCode::OK);
-
-    // Test 4: Exceed Rate Limit (3rd request) -> 429 Too Many Requests
-    let resp4 = client
-        .post(&msg_url)
-        .header("Authorization", "Bearer secrettoken123")
-        .json(&payload)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp4.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+    let body = metrics_resp.text().await.unwrap();
+    assert!(body.contains("agentguard_requests_intercepted_total 1"));
 
     let _ = child.kill();
     let _ = child.wait();
