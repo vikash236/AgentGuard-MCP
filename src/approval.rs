@@ -59,7 +59,20 @@ impl ApprovalEngine {
         let name_lower = tool_name.to_lowercase();
         self.require_tools.iter().any(|t| {
             let t_lower = t.to_lowercase();
-            t_lower == "*" || t_lower == name_lower
+            if t_lower == "*" || t_lower == name_lower {
+                return true;
+            }
+            if t_lower.starts_with('*') && t_lower.ends_with('*') && t_lower.len() > 2 {
+                let inner = &t_lower[1..t_lower.len() - 1];
+                return name_lower.contains(inner);
+            }
+            if let Some(suffix) = t_lower.strip_prefix('*') {
+                return name_lower.ends_with(suffix);
+            }
+            if let Some(prefix) = t_lower.strip_suffix('*') {
+                return name_lower.starts_with(prefix);
+            }
+            false
         })
     }
 

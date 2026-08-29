@@ -72,17 +72,31 @@ impl PathJail {
                 if s.trim().is_empty() {
                     return Ok(());
                 }
+
+                let decoded = percent_decode_recursive(s);
                 let is_path_key = key.is_some_and(is_known_path_key);
+
                 let looks_like_path = is_path_key
                     || s.starts_with('/')
                     || s.starts_with('\\')
                     || s.starts_with('.')
                     || s.contains("../")
                     || s.contains("..\\")
-                    || s.contains("://");
+                    || s.contains("://")
+                    || is_drive_letter_path(s)
+                    || decoded.starts_with('/')
+                    || decoded.starts_with('\\')
+                    || decoded.starts_with('.')
+                    || decoded.contains("../")
+                    || decoded.contains("..\\")
+                    || is_drive_letter_path(&decoded);
 
                 if looks_like_path {
-                    self.canonicalize_and_check(s)?;
+                    // Check decoded path first, then original path
+                    self.canonicalize_and_check(&decoded)?;
+                    if decoded != *s {
+                        self.canonicalize_and_check(s)?;
+                    }
                 }
             }
             serde_json::Value::Object(map) => {
@@ -101,27 +115,61 @@ impl PathJail {
     }
 }
 
+fn is_drive_letter_path(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
 fn is_known_path_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "path"
-            | "filepath"
-            | "file_path"
-            | "dir"
-            | "directory"
-            | "folder"
-            | "file"
-            | "target"
-            | "source"
-            | "src"
-            | "dest"
-            | "destination"
-            | "uri"
-            | "filename"
-            | "location"
-            | "root"
-    )
+    lower.contains("path")
+        || lower.contains("file")
+        || lower.contains("dir")
+        || lower.contains("folder")
+        || lower.contains("target")
+        || lower.contains("dest")
+        || lower.contains("src")
+        || lower.contains("source")
+        || lower.contains("location")
+        || lower.contains("root")
+        || lower.contains("uri")
+        || lower.contains("output")
+        || lower.contains("input")
+}
+
+/// Recursively percent-decode a string up to 5 iterations to catch nested encoding.
+fn percent_decode_recursive(input: &str) -> String {
+    let mut current = input.to_string();
+    for _ in 0..5 {
+        let decoded = percent_decode_once(&current);
+        if decoded == current {
+            break;
+        }
+        current = decoded;
+    }
+    current
+}
+
+fn percent_decode_once(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(hex_val) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+        {
+            result.push(hex_val);
+            i += 3;
+            continue;
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8(result).unwrap_or_else(|_| input.to_string())
 }
 
 /// Textually normalize a path without resolving symlinks (resolving . and .. components).
@@ -235,6 +283,18 @@ mod tests {
             "mode": "read"
         });
         assert!(jail.inspect_json_arguments(&evil_payload).is_err());
+
+        // Test percent-encoded traversal
+        let encoded_payload = serde_json::json!({
+            "custom_location": "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        });
+        assert!(jail.inspect_json_arguments(&encoded_payload).is_err());
+
+        // Test double-encoded traversal
+        let double_encoded = serde_json::json!({
+            "input_file": "%252e%252e%252foutside.txt"
+        });
+        assert!(jail.inspect_json_arguments(&double_encoded).is_err());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

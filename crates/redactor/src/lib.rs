@@ -33,12 +33,22 @@ impl SecretRedactor {
             // GitHub Access Tokens
             r"\b(?:ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36}\b",
             r"\bgithub_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}\b",
+            // Slack Tokens
+            r"\bxox[baprs]-[0-9a-zA-Z]{10,13}-[0-9a-zA-Z]{10,13}-[a-zA-Z0-9]{24,36}\b",
+            // Stripe API Keys
+            r"\b(?:sk|rk)_(?:test|live)_[0-9a-zA-Z]{24,99}\b",
+            // Google API Keys
+            r"\bAIza[0-9A-Za-z\-_]{35}\b",
+            // Twilio Account SID & Auth Tokens
+            r"\b(?:AC|SK)[a-zA-Z0-9]{32}\b",
+            // Database Connection URIs with credentials
+            r#"(?i)\b(?:postgres|postgresql|mysql|mongodb|redis|amqp)://[^\s:]+:[^\s@]+@[^\s/:]+\b"#,
             // JWT Tokens
             r"\beyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*\b",
             // RSA / SSH Private Key Blocks
             r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----",
             // `.env` Secret Key Assignments
-            r#"(?i)\b(?:API_KEY|SECRET_KEY|SECRET|PASSWORD|AUTH_TOKEN|PRIVATE_KEY|ACCESS_TOKEN)\s*=\s*['"]?([^\s'"]{8,})['"]?"#,
+            r#"(?i)\b(?:API_KEY|SECRET_KEY|SECRET|PASSWORD|PASSWD|AUTH_TOKEN|PRIVATE_KEY|ACCESS_TOKEN|CLIENT_SECRET|DATABASE_URL)\s*=\s*['"]?([^\s'"]{8,})['"]?"#,
         ];
 
         let regex_set = RegexSet::new(&pattern_strs).expect("Valid regex set");
@@ -70,7 +80,9 @@ impl SecretRedactor {
                 let matches = re.find_iter(&current_text).count();
                 if matches > 0 {
                     count += matches;
-                    current_text = re.replace_all(&current_text, REDACTED_PLACEHOLDER).to_string();
+                    current_text = re
+                        .replace_all(&current_text, REDACTED_PLACEHOLDER)
+                        .to_string();
                 }
             }
         }
@@ -80,18 +92,25 @@ impl SecretRedactor {
         let words: Vec<&str> = current_text.split_whitespace().collect();
 
         for word in words {
-            let clean_word = word.trim_matches(|c| matches!(c, '"' | '\'' | ',' | ';' | '(' | ')'));
+            let clean_word = word.trim_matches(|c| {
+                matches!(
+                    c,
+                    '"' | '\'' | ',' | ';' | '(' | ')' | '{' | '}' | '[' | ']'
+                )
+            });
             if clean_word == REDACTED_PLACEHOLDER {
                 final_words.push(word.to_string());
                 continue;
             }
 
-            if clean_word.len() >= self.min_entropy_len
-                && !clean_word.starts_with("http://")
-                && !clean_word.starts_with("https://")
-                && !clean_word.contains('/')
-                && !clean_word.contains('\\')
-            {
+            // Exclude plain URLs and obvious unix/windows filepaths
+            let is_url_or_path = clean_word.starts_with("http://")
+                || clean_word.starts_with("https://")
+                || clean_word.starts_with("file://")
+                || (clean_word.starts_with('/') && clean_word.matches('/').count() >= 2)
+                || (clean_word.contains('\\') && clean_word.matches('\\').count() >= 2);
+
+            if clean_word.len() >= self.min_entropy_len && !is_url_or_path {
                 let entropy = shannon_entropy(clean_word);
                 if entropy >= self.entropy_threshold {
                     count += 1;
@@ -155,6 +174,15 @@ fn is_sensitive_key(key: &str) -> bool {
             | "auth_token"
             | "private_key"
             | "access_token"
+            | "client_secret"
+            | "clientsecret"
+            | "authorization"
+            | "x-api-key"
+            | "cookie"
+            | "refresh_token"
+            | "session_id"
+            | "db_pass"
+            | "database_url"
     )
 }
 
@@ -193,7 +221,8 @@ mod tests {
     #[test]
     fn test_redact_rsa_private_key() {
         let redactor = SecretRedactor::new();
-        let input = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+        let input =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
         let (output, count) = redactor.redact_text(input);
         assert!(count >= 1);
         assert!(output.contains("[REDACTED]"));
@@ -213,5 +242,37 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(json_val["config"]["api_key"], "[REDACTED]");
         assert_eq!(json_val["config"]["timeout"], 30);
+    }
+
+    #[test]
+    fn test_redact_stripe_and_slack_and_db() {
+        let redactor = SecretRedactor::new();
+        let stripe_key = format!("{}_{}_{}", "sk", "live", "51A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6");
+        let stripe = format!("Using stripe key {stripe_key}");
+        let (res_stripe, count1) = redactor.redact_text(&stripe);
+        assert_eq!(count1, 1);
+        assert!(res_stripe.contains("[REDACTED]"));
+
+        let slack_token = format!("{}-{}-{}-{}", "xoxb", "123456789012", "123456789012", "abcdefghijklmnopqrstuvwx");
+        let slack = format!("Slack token: {slack_token}");
+        let (res_slack, count2) = redactor.redact_text(&slack);
+        assert_eq!(count2, 1);
+        assert!(res_slack.contains("[REDACTED]"));
+
+        let db = "Connect to postgres://app_user:s3cr3t_p@ssw0rd!@db.internal:5432/production";
+        let (res_db, count3) = redactor.redact_text(db);
+        assert_eq!(count3, 1);
+        assert!(res_db.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_redact_high_entropy_base64_with_slash() {
+        let redactor = SecretRedactor::new();
+        // High-entropy 32-char string containing a slash
+        let secret_b64 = "k9X/1mZp8Qv2Rt4Wb6Yu0Pq3Vs5Ty7Ux";
+        let input = format!("API response: {secret_b64}");
+        let (output, count) = redactor.redact_text(&input);
+        assert!(count >= 1, "Base64 token with slash should be redacted");
+        assert!(output.contains("[REDACTED]"));
     }
 }

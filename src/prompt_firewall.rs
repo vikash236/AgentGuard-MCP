@@ -92,6 +92,44 @@ impl PromptFirewall {
             _ => None,
         }
     }
+
+    /// Recursively scan and sanitize all string values in a JSON payload in-place.
+    /// Returns `Some(first_attack_reason)` if any prompt injections were detected and sanitized.
+    pub fn sanitize_payload(&self, payload: &mut serde_json::Value) -> Option<String> {
+        let mut first_reason = None;
+        self.sanitize_payload_internal(payload, &mut first_reason);
+        first_reason
+    }
+
+    fn sanitize_payload_internal(
+        &self,
+        payload: &mut serde_json::Value,
+        first_reason: &mut Option<String>,
+    ) {
+        match payload {
+            serde_json::Value::String(s) => {
+                if let Some(reason) = self.scan_text(s) {
+                    if first_reason.is_none() {
+                        *first_reason = Some(reason.clone());
+                    }
+                    *s = format!(
+                        "[UNTRUSTED_CONTENT_FLAGGED_BY_AGENTGUARD: potential prompt injection sanitized: {reason}]"
+                    );
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    self.sanitize_payload_internal(item, first_reason);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (_k, v) in map {
+                    self.sanitize_payload_internal(v, first_reason);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

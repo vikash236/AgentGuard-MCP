@@ -7,7 +7,9 @@ license = "MIT"
 
 [dependencies]
 agentguard-auditor = { path = "../auditor" }
+agentguard-jail = { path = "../jail" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+

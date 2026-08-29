@@ -1,4 +1,7 @@
-use axum::{routing::{get, post}, Json, Router};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use std::net::SocketAddr;
 use std::process::{Command, Stdio};
 use std::time::Duration;

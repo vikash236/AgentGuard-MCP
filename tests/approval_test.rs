@@ -40,7 +40,13 @@ fn test_proxy_approval_engine_blocks_sensitive_tool_on_timeout() {
     let child_cmd = if cfg!(windows) { "cmd" } else { "cat" };
     let child_args: &[&str] = if cfg!(windows) { &["/C", "more"] } else { &[] };
 
-    let mut proxy_args = vec!["proxy", "--config", config_path.to_str().unwrap(), "--", child_cmd];
+    let mut proxy_args = vec![
+        "proxy",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--",
+        child_cmd,
+    ];
     proxy_args.extend_from_slice(child_args);
 
     let mut child = Command::new(exe_path)

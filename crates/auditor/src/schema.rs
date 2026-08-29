@@ -13,7 +13,9 @@ pub enum ParseError {
     #[error("invalid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
 
-    #[error("unrecognized manifest format: expected a tools array or a JSON-RPC tools/list response")]
+    #[error(
+        "unrecognized manifest format: expected a tools array or a JSON-RPC tools/list response"
+    )]
     UnrecognizedFormat,
 
     #[error("manifest contains no tools")]

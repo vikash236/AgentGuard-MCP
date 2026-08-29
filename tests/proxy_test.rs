@@ -25,7 +25,13 @@ fn test_proxy_blocks_path_traversal() {
     let child_cmd = if cfg!(windows) { "cmd" } else { "cat" };
     let child_args: &[&str] = if cfg!(windows) { &["/C", "more"] } else { &[] };
 
-    let mut proxy_args = vec!["proxy", "--jail", temp_root.to_str().unwrap(), "--", child_cmd];
+    let mut proxy_args = vec![
+        "proxy",
+        "--jail",
+        temp_root.to_str().unwrap(),
+        "--",
+        child_cmd,
+    ];
     proxy_args.extend_from_slice(child_args);
 
     let mut child = Command::new(exe_path)
@@ -58,7 +64,10 @@ fn test_proxy_blocks_path_traversal() {
 
     let mut line1 = String::new();
     reader.read_line(&mut line1).unwrap();
-    assert!(!line1.is_empty(), "Proxy should forward safe frame to child");
+    assert!(
+        !line1.is_empty(),
+        "Proxy should forward safe frame to child"
+    );
     let parsed1: serde_json::Value = serde_json::from_str(&line1).expect("Valid JSON");
     assert_eq!(parsed1["id"], 1);
 
@@ -80,11 +89,19 @@ fn test_proxy_blocks_path_traversal() {
 
     let mut line2 = String::new();
     reader.read_line(&mut line2).unwrap();
-    assert!(!line2.is_empty(), "Proxy should return intercepted error response");
+    assert!(
+        !line2.is_empty(),
+        "Proxy should return intercepted error response"
+    );
     let parsed2: serde_json::Value = serde_json::from_str(&line2).expect("Valid JSON error");
     assert_eq!(parsed2["id"], 2);
     assert_eq!(parsed2["error"]["code"], -32602);
-    assert!(parsed2["error"]["message"].as_str().unwrap().contains("SecurityViolation"));
+    assert!(
+        parsed2["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("SecurityViolation")
+    );
 
     drop(stdin);
     let _ = child.kill();

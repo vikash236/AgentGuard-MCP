@@ -22,7 +22,10 @@ pub fn generate_all_vectors() -> Vec<FuzzVector> {
     // 1. Path Traversal Vectors
     let path_payloads = [
         ("unix_path_escape", "../../etc/passwd"),
-        ("windows_path_escape", r"..\..\..\Windows\System32\drivers\etc\hosts"),
+        (
+            "windows_path_escape",
+            r"..\..\..\Windows\System32\drivers\etc\hosts",
+        ),
         ("url_encoded_escape", "%2e%2e%2f%2e%2e%2fetc%2fpasswd"),
         ("file_uri_escape", "file:///etc/passwd"),
         ("nested_dot_dot_escape", "foo/../../secret.env"),

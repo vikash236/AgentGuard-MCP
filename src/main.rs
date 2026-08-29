@@ -95,6 +95,10 @@ enum Commands {
         #[arg(long)]
         audit_log: Option<PathBuf>,
 
+        /// Host interface to bind HTTP gateway proxy server (default: 127.0.0.1).
+        #[arg(long)]
+        host: Option<String>,
+
         /// Local port to bind HTTP gateway proxy server.
         #[arg(long)]
         port: Option<u16>,
@@ -110,6 +114,10 @@ enum Commands {
         /// Optional max requests per minute rate limit per client.
         #[arg(long)]
         rate_limit: Option<u32>,
+
+        /// Trust client-supplied X-Forwarded-For headers for rate limiting.
+        #[arg(long)]
+        trust_proxy_headers: bool,
 
         /// Optional path root for path chroot jail.
         #[arg(long, value_name = "PATH")]
@@ -208,7 +216,9 @@ async fn main() {
             let jail_path = match final_jail_path {
                 Some(p) => p,
                 None => {
-                    eprintln!("[agentguard] Error: --jail <PATH> or [sandbox].jail_root in config is required for proxy mode");
+                    eprintln!(
+                        "[agentguard] Error: --jail <PATH> or [sandbox].jail_root in config is required for proxy mode"
+                    );
                     process::exit(1);
                 }
             };
@@ -361,10 +371,12 @@ async fn main() {
         Commands::Gateway {
             config,
             audit_log,
+            host,
             port,
             target,
             token,
             rate_limit,
+            trust_proxy_headers,
             jail,
             redact,
             metrics,
@@ -383,32 +395,52 @@ async fn main() {
                 AgentGuardConfig::default()
             };
 
-            let final_port = port.or_else(|| {
-                loaded_config.gateway.as_ref().and_then(|g| g.port)
-            }).unwrap_or(8080);
+            let final_host =
+                host.or_else(|| loaded_config.gateway.as_ref().and_then(|g| g.host.clone()));
+
+            let final_port = port
+                .or_else(|| loaded_config.gateway.as_ref().and_then(|g| g.port))
+                .unwrap_or(8080);
 
             let final_target = target.or_else(|| {
-                loaded_config.gateway.as_ref().and_then(|g| g.target_url.clone())
+                loaded_config
+                    .gateway
+                    .as_ref()
+                    .and_then(|g| g.target_url.clone())
             });
 
             let target_url = match final_target {
                 Some(t) => t,
                 None => {
-                    eprintln!("[agentguard] Error: --target <URL> or [gateway].target_url in config is required for gateway mode");
+                    eprintln!(
+                        "[agentguard] Error: --target <URL> or [gateway].target_url in config is required for gateway mode"
+                    );
                     process::exit(1);
                 }
             };
 
-            let final_token = token.or_else(|| {
-                loaded_config.gateway.as_ref().and_then(|g| g.token.clone())
-            });
+            let final_token =
+                token.or_else(|| loaded_config.gateway.as_ref().and_then(|g| g.token.clone()));
 
             let final_rate_limit = rate_limit.or_else(|| {
-                loaded_config.gateway.as_ref().and_then(|g| g.max_requests_per_minute)
+                loaded_config
+                    .gateway
+                    .as_ref()
+                    .and_then(|g| g.max_requests_per_minute)
             });
 
+            let final_trust_proxy = trust_proxy_headers
+                || loaded_config
+                    .gateway
+                    .as_ref()
+                    .and_then(|g| g.trust_proxy_headers)
+                    .unwrap_or(false);
+
             let final_jail_path = jail.or_else(|| {
-                loaded_config.sandbox.as_ref().and_then(|s| s.jail_root.clone())
+                loaded_config
+                    .sandbox
+                    .as_ref()
+                    .and_then(|s| s.jail_root.clone())
             });
 
             let jail_obj = if let Some(j_path) = final_jail_path {
@@ -523,10 +555,12 @@ async fn main() {
             };
 
             let gateway_config = gateway::GatewayConfig {
+                host: final_host,
                 port: final_port,
                 target_url,
                 token: final_token,
                 rate_limit: final_rate_limit,
+                trust_proxy_headers: final_trust_proxy,
                 jail: jail_obj,
                 redactor: redactor_obj,
                 audit_logger: logger,
@@ -575,13 +609,17 @@ async fn main() {
                 }
             };
 
-            let policy = agentguard_fuzzer::PolicyGenerator::generate_policy(&parsed_manifest.tools);
+            let policy =
+                agentguard_fuzzer::PolicyGenerator::generate_policy(&parsed_manifest.tools);
             if let Some(out_path) = output {
                 if let Err(e) = std::fs::write(&out_path, &policy) {
                     eprintln!("error writing policy file: {e}");
                     process::exit(2);
                 }
-                eprintln!("[agentguard] Policy generated successfully at '{}'", out_path.display());
+                eprintln!(
+                    "[agentguard] Policy generated successfully at '{}'",
+                    out_path.display()
+                );
             } else {
                 print!("{policy}");
             }

@@ -1,6 +1,6 @@
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Default)]
 pub struct MetricsCollector {
@@ -53,13 +53,11 @@ impl MetricsCollector {
     }
 
     pub fn inc_policy_violations(&self) {
-        self.policy_violations_count
-            .fetch_add(1, Ordering::Relaxed);
+        self.policy_violations_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn inc_prompt_injections(&self) {
-        self.prompt_injections_count
-            .fetch_add(1, Ordering::Relaxed);
+        self.prompt_injections_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn inc_network_violations(&self) {
@@ -73,8 +71,7 @@ impl MetricsCollector {
     }
 
     pub fn inc_approvals_granted(&self) {
-        self.approvals_granted_count
-            .fetch_add(1, Ordering::Relaxed);
+        self.approvals_granted_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn inc_approvals_rejected(&self) {
@@ -87,8 +84,7 @@ impl MetricsCollector {
     }
 
     pub fn inc_rate_limit_rejections(&self) {
-        self.rate_limit_rejections
-            .fetch_add(1, Ordering::Relaxed);
+        self.rate_limit_rejections.fetch_add(1, Ordering::Relaxed);
     }
 
     #[allow(dead_code)]

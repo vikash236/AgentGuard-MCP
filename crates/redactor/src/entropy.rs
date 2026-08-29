@@ -34,6 +34,10 @@ mod tests {
     #[test]
     fn test_entropy_random_looking_string() {
         let entropy = shannon_entropy("8f9b2a7c4e1d603b5a8f");
-        assert!(entropy > 3.5, "High density hex token should have high entropy: {}", entropy);
+        assert!(
+            entropy > 3.5,
+            "High density hex token should have high entropy: {}",
+            entropy
+        );
     }
 }

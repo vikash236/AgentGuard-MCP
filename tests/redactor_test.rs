@@ -59,7 +59,10 @@ fn test_proxy_redacts_stdout_secrets() {
     let mut output_line = String::new();
     reader.read_line(&mut output_line).unwrap();
 
-    assert!(!output_line.is_empty(), "Proxy should output redacted response frame");
+    assert!(
+        !output_line.is_empty(),
+        "Proxy should output redacted response frame"
+    );
     assert!(
         output_line.contains("[REDACTED]"),
         "Secrets should be masked with [REDACTED]: {}",

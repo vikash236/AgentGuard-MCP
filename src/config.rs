@@ -15,11 +15,13 @@ pub struct RedactorConfigSection {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct GatewayConfigSection {
+    pub host: Option<String>,
     pub port: Option<u16>,
     pub target_url: Option<String>,
     pub require_bearer_token: Option<bool>,
     pub token: Option<String>,
     pub max_requests_per_minute: Option<u32>,
+    pub trust_proxy_headers: Option<bool>,
 }
 
 use std::collections::HashMap;
@@ -147,7 +149,10 @@ mod tests {
         );
         assert_eq!(
             config.approval.as_ref().unwrap().require_tools,
-            Some(vec!["delete_file".to_string(), "execute_command".to_string()])
+            Some(vec![
+                "delete_file".to_string(),
+                "execute_command".to_string()
+            ])
         );
     }
 }

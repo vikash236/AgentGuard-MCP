@@ -129,11 +129,7 @@ const SHELL_KEYWORDS: &[&str] = &[
 /// "command", "cmd", "script", "args"), this is a critical finding.
 fn rule_003_dangerous_tool_name(tool: &ToolDefinition) -> Vec<Finding> {
     let name_lower = tool.name.to_lowercase();
-    let desc_lower = tool
-        .description
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase();
+    let desc_lower = tool.description.as_deref().unwrap_or("").to_lowercase();
 
     let is_shell_tool = SHELL_KEYWORDS
         .iter()
@@ -169,7 +165,15 @@ fn rule_003_dangerous_tool_name(tool: &ToolDefinition) -> Vec<Finding> {
     };
 
     let command_param_names = [
-        "command", "cmd", "script", "args", "arguments", "exec", "program", "bin", "binary",
+        "command",
+        "cmd",
+        "script",
+        "args",
+        "arguments",
+        "exec",
+        "program",
+        "bin",
+        "binary",
         "shell",
     ];
 
@@ -177,7 +181,9 @@ fn rule_003_dangerous_tool_name(tool: &ToolDefinition) -> Vec<Finding> {
 
     for (param_name, param_schema) in properties {
         let param_lower = param_name.to_lowercase();
-        let is_command_param = command_param_names.iter().any(|cp| param_lower.contains(cp));
+        let is_command_param = command_param_names
+            .iter()
+            .any(|cp| param_lower.contains(cp));
 
         if !is_command_param {
             continue;

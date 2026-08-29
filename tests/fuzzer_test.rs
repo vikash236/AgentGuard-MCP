@@ -31,7 +31,11 @@ fn test_fuzzer_and_policy_generator_end_to_end() {
             }
         ]
     });
-    fs::write(&manifest_path, serde_json::to_string(&manifest_json).unwrap()).unwrap();
+    fs::write(
+        &manifest_path,
+        serde_json::to_string(&manifest_json).unwrap(),
+    )
+    .unwrap();
 
     // 1. Test FuzzerEngine directly
     let report = agentguard_fuzzer::FuzzerEngine::fuzz_manifest(&manifest_path).unwrap();

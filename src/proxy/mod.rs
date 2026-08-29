@@ -91,12 +91,34 @@ pub async fn run_proxy(
 
     let logger_clone = audit_logger.clone();
     let metrics_clone_stdout = metrics.clone();
+    let prompt_firewall_clone_stdout = prompt_firewall.clone();
 
-    // Forward child stdout to parent stdout (with optional secret redaction)
+    // Forward child stdout to parent stdout (with secret redaction & outbound prompt injection sanitization)
     tokio::spawn(async move {
         let mut reader = BufReader::new(child_stdout).lines();
         let mut stdout = tokio::io::stdout();
         while let Ok(Some(mut line)) = reader.next_line().await {
+            // Outbound Prompt Injection Defense (Second-order prompt injection in tool outputs)
+            if let Some(ref firewall) = prompt_firewall_clone_stdout
+                && let Ok(mut json_val) = serde_json::from_str::<serde_json::Value>(&line)
+                && let Some(attack_reason) = firewall.sanitize_payload(&mut json_val)
+            {
+                eprintln!(
+                    "[agentguard-firewall] SANITIZED prompt injection in tool output: {attack_reason}"
+                );
+                logger_clone.log_event(
+                    "prompt_injection_in_output",
+                    "HIGH",
+                    &format!("Sanitized prompt injection in tool output: {attack_reason}"),
+                );
+                if let Some(ref m) = metrics_clone_stdout {
+                    m.inc_prompt_injections();
+                }
+                if let Ok(sanitized_str) = serde_json::to_string(&json_val) {
+                    line = sanitized_str;
+                }
+            }
+
             if let Some(ref redactor) = redactor {
                 if let Ok(mut json_val) = serde_json::from_str::<serde_json::Value>(&line) {
                     let n = redactor.redact_json(&mut json_val);
@@ -139,7 +161,6 @@ pub async fn run_proxy(
         }
     });
 
-    // Main loop: Intercept parent stdin -> inspect -> forward to child stdin
     let mut stdin_reader = BufReader::new(tokio::io::stdin()).lines();
 
     while let Ok(Some(line)) = stdin_reader.next_line().await {
@@ -147,11 +168,8 @@ pub async fn run_proxy(
             continue;
         }
 
-        if let Some(ref m) = metrics {
-            m.inc_requests();
-        }
-
-        if let Some(err_resp) = handle_incoming_frame(
+        // Intercept and evaluate incoming frames
+        if let Some(error_response) = handle_incoming_frame(
             &jail,
             &line,
             &audit_logger,
@@ -164,13 +182,13 @@ pub async fn run_proxy(
         .await
         {
             let mut stdout = tokio::io::stdout();
-            let resp_str = serde_json::to_string(&err_resp)?;
-            stdout.write_all(format!("{resp_str}\n").as_bytes()).await?;
-            stdout.flush().await?;
+            let resp_str = serde_json::to_string(&error_response).unwrap_or_default();
+            let _ = stdout.write_all(format!("{resp_str}\n").as_bytes()).await;
+            let _ = stdout.flush().await;
             continue; // Intercepted and blocked: DO NOT forward frame
         }
 
-        // Forward approved or non-tool frame to child process stdin
+        // Forward approved frame to child process stdin
         if let Err(e) = child_stdin.write_all(format!("{line}\n").as_bytes()).await {
             eprintln!("[agentguard] Error writing to child stdin: {e}");
             break;
@@ -195,49 +213,23 @@ async fn handle_incoming_frame(
     approval_engine: Option<&ApprovalEngine>,
 ) -> Option<serde_json::Value> {
     let msg: serde_json::Value = serde_json::from_str(line).ok()?;
-
-    if msg.get("method").and_then(|m| m.as_str()) != Some("tools/call") {
-        return None;
-    }
-
-    let params = msg.get("params")?;
+    let method = msg.get("method").and_then(|m| m.as_str())?;
+    let params = msg.get("params").unwrap_or(&serde_json::Value::Null);
     let req_id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
-    let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
 
-    // 1. Evaluate Prompt Injection Firewall
-    if let Some(attack_reason) = prompt_firewall.and_then(|f| f.inspect_payload(params)) {
-        eprintln!("[agentguard-firewall] BLOCKED Prompt Injection attack: {attack_reason}");
-        logger.log_event(
-            "prompt_injection_blocked",
-            "CRITICAL",
-            &format!("BLOCKED Prompt Injection attack: {attack_reason}"),
-        );
-        if let Some(m) = metrics {
-            m.inc_prompt_injections();
-        }
-
-        let err_resp = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {
-                "code": -32602,
-                "message": format!("PromptInjectionBlocked: {attack_reason}")
-            }
-        });
-        return Some(err_resp);
-    }
-
-    // 2. Evaluate Policy Engine (allowed/denied tools, argument regex rules)
-    if let Some(engine) = policy_engine {
-        if let Err(policy_err) = engine.evaluate_tool_call(tool_name, params) {
-            eprintln!("[agentguard-policy] REJECTED tool call '{tool_name}': {policy_err}");
+    // 1. Evaluate Prompt Injection Firewall across all method parameters
+    if !params.is_null() {
+        if let Some(attack_reason) = prompt_firewall.and_then(|f| f.inspect_payload(params)) {
+            eprintln!(
+                "[agentguard-firewall] BLOCKED Prompt Injection attack in '{method}': {attack_reason}"
+            );
             logger.log_event(
-                "policy_violation",
-                "HIGH",
-                &format!("REJECTED tool call '{tool_name}': {policy_err}"),
+                "prompt_injection_blocked",
+                "CRITICAL",
+                &format!("BLOCKED Prompt Injection attack in '{method}': {attack_reason}"),
             );
             if let Some(m) = metrics {
-                m.inc_policy_violations();
+                m.inc_prompt_injections();
             }
 
             let err_resp = serde_json::json!({
@@ -245,77 +237,25 @@ async fn handle_incoming_frame(
                 "id": req_id,
                 "error": {
                     "code": -32602,
-                    "message": format!("PolicyViolation: {policy_err}")
+                    "message": format!("PromptInjectionBlocked: {attack_reason}")
                 }
             });
             return Some(err_resp);
         }
     }
 
-    // 3. Evaluate Network Guard (SSRF & egress domain controls)
-    if let Some(guard) = network_guard {
-        if let Err(net_err) = guard.inspect_payload(params) {
-            eprintln!("[agentguard-network] REJECTED tool call '{tool_name}': {net_err}");
-            logger.log_event(
-                "network_violation",
-                "HIGH",
-                &format!("REJECTED tool call '{tool_name}': {net_err}"),
-            );
-            if let Some(m) = metrics {
-                m.inc_network_violations();
-            }
-
-            let err_resp = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32602,
-                    "message": format!("NetworkViolation: {net_err}")
-                }
-            });
-            return Some(err_resp);
-        }
-    }
-
-    // 4. Evaluate Path Jail
-    if let Err(jail_err) = jail.inspect_json_arguments(params) {
-        eprintln!("[agentguard-jail] REJECTED tool call: {jail_err}");
-        logger.log_event(
-            "path_jail_violation",
-            "HIGH",
-            &format!("REJECTED tool call: {jail_err}"),
-        );
-        if let Some(m) = metrics {
-            m.inc_jail_violations();
-        }
-
-        let err_resp = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {
-                "code": -32602,
-                "message": format!("SecurityViolation: {jail_err}")
-            }
-        });
-        return Some(err_resp);
-    }
-
-    // 5. Evaluate Human-In-The-Loop Approval Engine
-    if let Some(approval) = approval_engine {
-        if approval.requires_approval(tool_name) {
-            if let Some(m) = metrics {
-                m.inc_approvals_prompted();
-            }
-
-            if let Err(approval_err) = approval.request_approval(tool_name, params).await {
-                eprintln!("[agentguard-approval] DENIED tool call '{tool_name}': {approval_err}");
+    // 2. Multi-method Network Guard (SSRF / Egress URL inspection)
+    if !params.is_null() {
+        if let Some(guard) = network_guard {
+            if let Err(net_err) = guard.inspect_payload_async(params).await {
+                eprintln!("[agentguard-network] BLOCKED egress violation in '{method}': {net_err}");
                 logger.log_event(
-                    "approval_denied",
-                    "MEDIUM",
-                    &format!("DENIED tool call '{tool_name}': {approval_err}"),
+                    "network_violation_blocked",
+                    "CRITICAL",
+                    &format!("BLOCKED egress violation in '{method}': {net_err}"),
                 );
                 if let Some(m) = metrics {
-                    m.inc_approvals_rejected();
+                    m.inc_network_violations();
                 }
 
                 let err_resp = serde_json::json!({
@@ -323,12 +263,110 @@ async fn handle_incoming_frame(
                     "id": req_id,
                     "error": {
                         "code": -32602,
-                        "message": format!("ApprovalDenied: {approval_err}")
+                        "message": format!("NetworkViolation: {net_err}")
                     }
                 });
                 return Some(err_resp);
-            } else if let Some(m) = metrics {
-                m.inc_approvals_granted();
+            }
+        }
+    }
+
+    // 3. Multi-method Path Jail inspection
+    if !params.is_null() {
+        if let Err(jail_err) = jail.inspect_json_arguments(params) {
+            eprintln!("[agentguard-jail] BLOCKED path traversal in '{method}': {jail_err}");
+            logger.log_event(
+                "path_jail_violation",
+                "HIGH",
+                &format!("BLOCKED path traversal in '{method}': {jail_err}"),
+            );
+            if let Some(m) = metrics {
+                m.inc_jail_violations();
+            }
+
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": format!("SecurityViolation: {jail_err}")
+                }
+            });
+            return Some(err_resp);
+        }
+    }
+
+    // 4. Specific inspection for tools/call (Policy Engine and HITL Approval)
+    if method == "tools/call" {
+        let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+
+        // 4a. Evaluate Policy Engine
+        if let Some(engine) = policy_engine {
+            if let Err(policy_err) = engine.evaluate_tool_call(tool_name, params) {
+                eprintln!("[agentguard-policy] REJECTED tool call '{tool_name}': {policy_err}");
+                logger.log_event(
+                    "policy_violation",
+                    "HIGH",
+                    &format!("REJECTED tool call '{tool_name}': {policy_err}"),
+                );
+                if let Some(m) = metrics {
+                    m.inc_policy_violations();
+                }
+
+                let err_resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32602,
+                        "message": format!("PolicyViolation: {policy_err}")
+                    }
+                });
+                return Some(err_resp);
+            }
+        }
+
+        // 4b. Evaluate Human-In-The-Loop Approval Engine
+        if let Some(approval) = approval_engine {
+            if approval.requires_approval(tool_name) {
+                if let Some(m) = metrics {
+                    m.inc_approvals_prompted();
+                }
+
+                match approval.request_approval(tool_name, params).await {
+                    Ok(()) => {
+                        eprintln!("[agentguard-approval] GRANTED execution for '{tool_name}'");
+                        logger.log_event(
+                            "approval_granted",
+                            "LOW",
+                            &format!("Operator GRANTED execution for '{tool_name}'"),
+                        );
+                        if let Some(m) = metrics {
+                            m.inc_approvals_granted();
+                        }
+                    }
+                    Err(approval_err) => {
+                        eprintln!(
+                            "[agentguard-approval] DENIED or TIMED OUT for '{tool_name}': {approval_err}"
+                        );
+                        logger.log_event(
+                            "approval_denied",
+                            "HIGH",
+                            &format!("DENIED or TIMED OUT for '{tool_name}': {approval_err}"),
+                        );
+                        if let Some(m) = metrics {
+                            m.inc_approvals_rejected();
+                        }
+                        let err_resp = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "error": {
+                                "code": -32602,
+                                "message": format!("ApprovalDenied: {approval_err}")
+                            }
+                        });
+                        return Some(err_resp);
+                    }
+                }
             }
         }
     }

@@ -79,6 +79,20 @@
 - [x] Integrate approval engine into stdio proxy (`src/proxy/mod.rs`) and CLI (`src/main.rs`).
 - [x] Add E2E integration test suite (`tests/approval_test.rs`).
 
+## Completed: Security Hardening & Evaluator Remediation
+
+- [x] Outbound tool response Prompt Firewall sanitization (`[UNTRUSTED_CONTENT_FLAGGED_BY_AGENTGUARD: ...]`) on stdio proxy stdout and gateway HTTP responses.
+- [x] Multi-method JSON-RPC frame inspection across `tools/call`, `resources/read`, and `prompts/get`.
+- [x] Dynamic live payload execution against `PathJail` in `FuzzerEngine`.
+- [x] SSRF NetworkGuard Tokio async DNS resolution & alternate numeric/IPv4-mapped IPv6 decoding.
+- [x] PathJail recursive percent-decoding (`percent_decode_recursive`) & Windows drive letter detection (`is_drive_letter_path`).
+- [x] HTTP Gateway default `127.0.0.1` bind, peer `SocketAddr` rate limiting with LRU memory bounding, and protected `/metrics`.
+- [x] SHA-256 hash chaining in `AuditLogger`.
+- [x] Anchored regex rules in `PolicyEngine` and wildcard tool matching in `ApprovalEngine`.
+- [x] Expanded `SecretRedactor` patterns and base64 slash handling.
+- [x] GitHub Actions automated CI workflow (`.github/workflows/ci.yml`).
+
+
 
 
 

@@ -37,7 +37,14 @@ impl PolicyEngine {
         let mut argument_rules = HashMap::new();
         if let Some(ref rules) = section.argument_rules {
             for (arg_name, pattern_str) in rules {
-                let re = Regex::new(pattern_str)?;
+                // Ensure pattern is fully anchored
+                let anchored_pattern = if pattern_str.starts_with('^') && pattern_str.ends_with('$')
+                {
+                    pattern_str.clone()
+                } else {
+                    format!("^(?:{pattern_str})$")
+                };
+                let re = Regex::new(&anchored_pattern)?;
                 argument_rules.insert(arg_name.clone(), re);
             }
         }
@@ -55,12 +62,20 @@ impl PolicyEngine {
         params: &serde_json::Value,
     ) -> Result<(), PolicyViolationError> {
         // 1. Check denied tools
-        if self.denied_tools.as_ref().is_some_and(|d| d.contains(tool_name)) {
+        if self
+            .denied_tools
+            .as_ref()
+            .is_some_and(|d| d.contains(tool_name))
+        {
             return Err(PolicyViolationError::ToolDenied(tool_name.to_string()));
         }
 
         // 2. Check allowed tools
-        if self.allowed_tools.as_ref().is_some_and(|a| !a.contains(tool_name)) {
+        if self
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|a| !a.contains(tool_name))
+        {
             return Err(PolicyViolationError::ToolNotAllowed(tool_name.to_string()));
         }
 
@@ -70,7 +85,17 @@ impl PolicyEngine {
             if let Some(args_map) = args_obj.and_then(|a| a.as_object()) {
                 for (arg_name, re) in &self.argument_rules {
                     if let Some(val) = args_map.get(arg_name) {
-                        let val_str = val.as_str().unwrap_or("");
+                        let val_str = match val.as_str() {
+                            Some(s) => s,
+                            None => {
+                                // Do not silently coerce non-string values to empty string
+                                return Err(PolicyViolationError::ArgumentConstraintViolation {
+                                    arg: arg_name.clone(),
+                                    val: val.to_string(),
+                                    pattern: re.as_str().to_string(),
+                                });
+                            }
+                        };
                         if !re.is_match(val_str) {
                             return Err(PolicyViolationError::ArgumentConstraintViolation {
                                 arg: arg_name.clone(),
@@ -139,7 +164,11 @@ mod tests {
             "name": "read_file",
             "arguments": { "path": "/safe/data.txt" }
         });
-        assert!(engine.evaluate_tool_call("read_file", &valid_params).is_ok());
+        assert!(
+            engine
+                .evaluate_tool_call("read_file", &valid_params)
+                .is_ok()
+        );
 
         let invalid_params = json!({
             "name": "read_file",

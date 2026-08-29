@@ -12,16 +12,21 @@
 - Phase 8 (Prompt Injection Firewall & LLM Guardrails) **complete**.
 - Phase 9 (SSRF & Network Egress Guardrails) **complete**.
 - Phase 10 (Human-in-the-Loop Interactive Approval Engine) **complete**.
-- **ALL 11 PROJECT PHASES (P0..P10) FULLY IMPLEMENTED AND VERIFIED.**
-- 68 workspace unit and integration tests passing, 0 clippy warnings.
+- Security Hardening & Evaluator Remediation **complete**.
+- **ALL 11 PROJECT PHASES (P0..P10) + SECURITY EVALUATOR HARDENING FULLY IMPLEMENTED AND VERIFIED.**
+- 72 workspace unit and integration tests passing, 0 clippy warnings, cargo fmt verified.
 
-## Completed in Phase 9 & Phase 10
-- `NetworkGuard` (`src/network_guard.rs`): Real-time SSRF and outbound network egress inspector blocking loopback, RFC1918 private subnets, cloud metadata (`169.254.169.254`), and enforcing domain allowlists/denylists.
-- `ApprovalEngine` (`src/approval.rs`): Human-In-The-Loop interactive approval engine with direct console prompting (`CONIN$` / `/dev/tty`), async timeouts, and programmatic hook support.
-- `AgentGuardConfig` (`src/config.rs`): Added `[network_guard]` and `[approval]` configuration sections.
-- `MetricsCollector` (`src/metrics.rs`): Added `network_violations_count`, `approvals_prompted_count`, `approvals_granted_count`, `approvals_rejected_count` counters.
-- Stdio & Gateway Interception: Integrated network guard & approval engine into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
-- E2E Integration tests (`tests/network_guard_test.rs`, `tests/approval_test.rs`).
+## Completed in Security Hardening & Evaluator Remediation
+- Outbound Prompt Firewall (`src/proxy/mod.rs`, `src/gateway/mod.rs`): Sanitizes downstream tool outputs (`[UNTRUSTED_CONTENT_FLAGGED_BY_AGENTGUARD: ...]`) to block second-order prompt injections.
+- Multi-Method JSON-RPC inspection: Covered `tools/call`, `resources/read`, and `prompts/get`.
+- Dynamic Fuzzer Engine (`crates/fuzzer/src/lib.rs`): Tests live payloads dynamically against `PathJail` runtime.
+- SSRF Network Guard (`src/network_guard.rs`): Tokio async DNS resolution, numeric (hex/decimal/octal/shortened) IP & IPv4-mapped IPv6 decoding.
+- Path Jail (`crates/jail/src/lib.rs`): Recursive percent-decoding & Windows drive-letter escape blocking.
+- HTTP Gateway (`src/gateway/mod.rs`): Default `127.0.0.1` bind, peer `SocketAddr` rate limiting with LRU memory bounding, and protected `/metrics`.
+- Audit Logger (`src/audit_logger.rs`): Cryptographic SHA-256 hash chaining.
+- Policy & Approval Engines (`src/policy_engine.rs`, `src/approval.rs`): Anchored regexes and wildcard tool matching.
+- Secret Redactor (`crates/redactor/src/lib.rs`): Expanded Slack, Stripe, Google, Twilio, DB URI patterns & base64 slash support.
+- CI/CD (`.github/workflows/ci.yml`): Automated GitHub Actions workflow.
 
 
 

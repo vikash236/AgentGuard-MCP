@@ -41,7 +41,10 @@ impl FuzzReport {
         out.push_str("          AGENTGUARD-MCP FUZZING REPORT             \n");
         out.push_str("====================================================\n");
         out.push_str(&format!("Total Vectors Tested: {}\n", self.total_tests));
-        out.push_str(&format!("Vulnerabilities Flagged: {}\n\n", self.total_vulnerabilities));
+        out.push_str(&format!(
+            "Vulnerabilities Flagged: {}\n\n",
+            self.total_vulnerabilities
+        ));
 
         if self.findings.is_empty() {
             out.push_str("Result: CLEAN — No security vulnerabilities flagged during fuzzing.\n");
