@@ -86,7 +86,10 @@ pub fn generate_all_vectors() -> Vec<FuzzVector> {
 
     // 4. SSRF & Alternate Numeric IP Vectors
     let ssrf_payloads = [
-        ("direct_metadata", "http://169.254.169.254/latest/meta-data/"),
+        (
+            "direct_metadata",
+            "http://169.254.169.254/latest/meta-data/",
+        ),
         ("decimal_ip_metadata", "http://2852039166/"),
         ("hex_loopback", "http://0x7f000001/"),
         ("octal_loopback", "http://0177.0.0.1/"),
