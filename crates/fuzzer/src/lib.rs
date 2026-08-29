@@ -118,6 +118,26 @@ impl FuzzerEngine {
                             });
                         }
                     }
+                    VectorCategory::Ssrf => {
+                        if (schema_str.contains("url")
+                            || schema_str.contains("uri")
+                            || schema_str.contains("host")
+                            || schema_str.contains("endpoint"))
+                            && !schema_str.contains("pattern")
+                        {
+                            report.add_finding(FuzzFinding {
+                                tool_name: tool.name.clone(),
+                                vector_name: vector.name.to_string(),
+                                category: "SSRF & Egress Risk".to_string(),
+                                severity: FuzzSeverity::High,
+                                description: format!(
+                                    "Tool '{}' schema accepts unconstrained network target parameters for vector '{}'",
+                                    tool.name, vector.name
+                                ),
+                                sample_payload: vector.payload.clone(),
+                            });
+                        }
+                    }
                     VectorCategory::BoundaryStress => {
                         if schema_str.contains("\"type\":\"string\"")
                             && !schema_str.contains("maxlength")

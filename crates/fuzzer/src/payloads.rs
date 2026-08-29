@@ -5,6 +5,7 @@ pub enum VectorCategory {
     CommandInjection,
     PromptInjection,
     BoundaryStress,
+    Ssrf,
 }
 
 /// A specific security fuzzing payload test vector.
@@ -27,6 +28,12 @@ pub fn generate_all_vectors() -> Vec<FuzzVector> {
             r"..\..\..\Windows\System32\drivers\etc\hosts",
         ),
         ("url_encoded_escape", "%2e%2e%2f%2e%2e%2fetc%2fpasswd"),
+        (
+            "double_url_encoded_escape",
+            "%252e%252e%252f%252e%252e%252fetc%252fpasswd",
+        ),
+        ("windows_drive_letter_c", r"C:\Windows\System32\cmd.exe"),
+        ("windows_drive_letter_d", r"D:\data\secret.key"),
         ("file_uri_escape", "file:///etc/passwd"),
         ("nested_dot_dot_escape", "foo/../../secret.env"),
     ];
@@ -77,7 +84,31 @@ pub fn generate_all_vectors() -> Vec<FuzzVector> {
         });
     }
 
-    // 4. Boundary & Null-Byte Stress Vectors
+    // 4. SSRF & Alternate Numeric IP Vectors
+    let ssrf_payloads = [
+        ("direct_metadata", "http://169.254.169.254/latest/meta-data/"),
+        ("decimal_ip_metadata", "http://2852039166/"),
+        ("hex_loopback", "http://0x7f000001/"),
+        ("octal_loopback", "http://0177.0.0.1/"),
+        ("shortened_dotted_loopback", "http://127.1/"),
+        (
+            "ipv4_mapped_ipv6_metadata",
+            "http://[::ffff:169.254.169.254]/latest/meta-data/",
+        ),
+        (
+            "ipv4_mapped_ipv6_loopback",
+            "http://[::ffff:127.0.0.1]/admin",
+        ),
+    ];
+    for (name, payload) in ssrf_payloads {
+        vectors.push(FuzzVector {
+            category: VectorCategory::Ssrf,
+            name,
+            payload: payload.to_string(),
+        });
+    }
+
+    // 5. Boundary & Null-Byte Stress Vectors
     vectors.push(FuzzVector {
         category: VectorCategory::BoundaryStress,
         name: "buffer_overflow_10k",
