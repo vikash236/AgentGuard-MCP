@@ -40,28 +40,7 @@ impl NetworkGuard {
         }
     }
 
-    /// Recursively inspect JSON-RPC arguments for disallowed URLs or SSRF targets.
-    ///
-    /// Note: This method only performs static syntactic and IP checks without DNS resolution.
-    /// For runtime security enforcement with fail-closed DNS resolution, use `inspect_payload_async`.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use `inspect_payload_async` to ensure live DNS resolution and SSRF defense"
-    )]
-    #[allow(dead_code)]
-    pub fn inspect_payload(&self, value: &serde_json::Value) -> Result<(), String> {
-        let mut urls = Vec::new();
-        self.extract_urls_from_value(value, &mut urls);
-
-        #[allow(deprecated)]
-        for url in urls {
-            self.validate_url(&url)?;
-        }
-
-        Ok(())
-    }
-
-    /// Recursively inspect JSON-RPC arguments for disallowed URLs with live DNS resolution (asynchronous).
+    /// Recursively inspect JSON-RPC arguments for disallowed URLs with live fail-closed DNS resolution.
     pub async fn inspect_payload_async(&self, value: &serde_json::Value) -> Result<(), String> {
         let mut urls = Vec::new();
         self.extract_urls_from_value(value, &mut urls);
@@ -92,29 +71,6 @@ impl NetworkGuard {
             }
             _ => {}
         }
-    }
-
-    /// Validate a single URL against SSRF, cloud metadata, scheme, and domain rules.
-    ///
-    /// Note: This method only performs static syntactic and IP checks without DNS resolution.
-    /// For runtime security enforcement with fail-closed DNS resolution, use `validate_url_async`.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use `validate_url_async` to ensure live DNS resolution and SSRF defense"
-    )]
-    #[allow(dead_code)]
-    pub fn validate_url(&self, raw_url: &str) -> Result<(), String> {
-        let (host, _lower) = self.pre_validate_url(raw_url)?;
-
-        // Check if host is numeric/IP and inspect
-        if let Some(ip) = parse_ip_or_numeric_host(&host) {
-            self.validate_ip(ip, raw_url)?;
-        }
-
-        // Domain rule verification
-        self.validate_domain_rules(&host)?;
-
-        Ok(())
     }
 
     /// Validate a single URL with active DNS resolution against SSRF and rebinding (asynchronous).
@@ -444,8 +400,8 @@ pub type SharedNetworkGuard = Arc<NetworkGuard>;
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_blocks_cloud_metadata() {
+    #[tokio::test]
+    async fn test_blocks_cloud_metadata() {
         let guard = NetworkGuard::default();
         let payload = serde_json::json!({
             "name": "fetch_url",
@@ -453,41 +409,42 @@ mod tests {
                 "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials"
             }
         });
-        let result = guard.inspect_payload(&payload);
+        let result = guard.inspect_payload_async(&payload).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("metadata"));
     }
 
-    #[test]
-    fn test_blocks_localhost_and_private_ips() {
+    #[tokio::test]
+    async fn test_blocks_localhost_and_private_ips() {
         let guard = NetworkGuard::default();
 
-        assert!(guard.validate_url("http://127.0.0.1:8080/admin").is_err());
-        assert!(guard.validate_url("http://localhost:3000/api").is_err());
-        assert!(guard.validate_url("http://192.168.1.1/router").is_err());
-        assert!(guard.validate_url("http://10.0.0.5:9000/internal").is_err());
-        assert!(guard.validate_url("http://172.16.5.1/secret").is_err());
-        assert!(guard.validate_url("file:///etc/passwd").is_err());
+        assert!(guard.validate_url_async("http://127.0.0.1:8080/admin").await.is_err());
+        assert!(guard.validate_url_async("http://localhost:3000/api").await.is_err());
+        assert!(guard.validate_url_async("http://192.168.1.1/router").await.is_err());
+        assert!(guard.validate_url_async("http://10.0.0.5:9000/internal").await.is_err());
+        assert!(guard.validate_url_async("http://172.16.5.1/secret").await.is_err());
+        assert!(guard.validate_url_async("file:///etc/passwd").await.is_err());
     }
 
-    #[test]
-    fn test_blocks_ipv4_mapped_ipv6_and_alternate_encodings() {
+    #[tokio::test]
+    async fn test_blocks_ipv4_mapped_ipv6_and_alternate_encodings() {
         let guard = NetworkGuard::default();
 
         // IPv4-mapped IPv6 metadata
         assert!(
             guard
-                .validate_url("http://[::ffff:169.254.169.254]/latest/meta-data/")
+                .validate_url_async("http://[::ffff:169.254.169.254]/latest/meta-data/")
+                .await
                 .is_err()
         );
         // Decimal metadata (2852039166 = 169.254.169.254)
-        assert!(guard.validate_url("http://2852039166/").is_err());
+        assert!(guard.validate_url_async("http://2852039166/").await.is_err());
         // Hex loopback (0x7f000001 = 127.0.0.1)
-        assert!(guard.validate_url("http://0x7f000001/").is_err());
+        assert!(guard.validate_url_async("http://0x7f000001/").await.is_err());
         // Octal loopback (0177.0.0.1 = 127.0.0.1)
-        assert!(guard.validate_url("http://0177.0.0.1/").is_err());
+        assert!(guard.validate_url_async("http://0177.0.0.1/").await.is_err());
         // Shortened dotted form (127.1 = 127.0.0.1)
-        assert!(guard.validate_url("http://127.1/").is_err());
+        assert!(guard.validate_url_async("http://127.1/").await.is_err());
     }
 
     #[tokio::test]
@@ -499,23 +456,25 @@ mod tests {
         assert!(res.is_err());
     }
 
-    #[test]
-    fn test_allows_public_https_urls() {
+    #[tokio::test]
+    async fn test_allows_public_https_urls() {
         let guard = NetworkGuard::default();
         assert!(
             guard
-                .validate_url("https://api.github.com/repos/rust-lang/rust")
+                .validate_url_async("https://api.github.com/repos/rust-lang/rust")
+                .await
                 .is_ok()
         );
         assert!(
             guard
-                .validate_url("https://docs.rs/serde/latest/serde/")
+                .validate_url_async("https://docs.rs/serde/latest/serde/")
+                .await
                 .is_ok()
         );
     }
 
-    #[test]
-    fn test_allowed_and_denied_domains() {
+    #[tokio::test]
+    async fn test_allowed_and_denied_domains() {
         let guard = NetworkGuard::new(
             true,
             true,
@@ -523,21 +482,23 @@ mod tests {
             vec!["malicious.github.com".to_string()],
         );
 
-        assert!(guard.validate_url("https://github.com/anthropic").is_ok());
-        assert!(guard.validate_url("https://api.github.com/user").is_ok());
+        assert!(guard.validate_url_async("https://github.com/anthropic").await.is_ok());
+        assert!(guard.validate_url_async("https://api.github.com/user").await.is_ok());
         assert!(
             guard
-                .validate_url("https://crates.io/api/v1/crates")
+                .validate_url_async("https://crates.io/api/v1/crates")
+                .await
                 .is_ok()
         );
 
         // Denied domain should fail
         assert!(
             guard
-                .validate_url("https://malicious.github.com/payload")
+                .validate_url_async("https://malicious.github.com/payload")
+                .await
                 .is_err()
         );
         // Domain not in allowed list should fail
-        assert!(guard.validate_url("https://google.com/search").is_err());
+        assert!(guard.validate_url_async("https://google.com/search").await.is_err());
     }
 }

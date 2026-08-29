@@ -345,7 +345,69 @@ async fn sse_handler(
 
             // 1. Outbound Prompt Injection Defense on SSE event chunk
             if let Some(ref firewall) = firewall_opt {
-                if let Ok(mut json_val) = serde_json::from_str::<serde_json::Value>(&text) {
+                if text.contains("data:") {
+                    let mut lines: Vec<String> = Vec::new();
+                    for line in text.lines() {
+                        if let Some(data_str) = line.strip_prefix("data:").map(|s| s.trim()) {
+                            if let Ok(mut json_val) =
+                                serde_json::from_str::<serde_json::Value>(data_str)
+                            {
+                                if let Some(attack_reason) =
+                                    firewall.sanitize_payload(&mut json_val)
+                                {
+                                    eprintln!(
+                                        "[agentguard-firewall] SANITIZED prompt injection in SSE data payload: {attack_reason}"
+                                    );
+                                    logger_clone.log_event(
+                                        "prompt_injection_in_output",
+                                        "HIGH",
+                                        &format!(
+                                            "Sanitized prompt injection in SSE data payload: {attack_reason}"
+                                        ),
+                                    );
+                                    if let Some(ref m) = metrics_clone {
+                                        m.inc_prompt_injections();
+                                    }
+                                    if let Ok(sanitized_json) = serde_json::to_string(&json_val) {
+                                        lines.push(format!("data: {sanitized_json}"));
+                                        modified = true;
+                                        continue;
+                                    }
+                                }
+                            } else if let Some(attack_reason) = firewall.scan_text(data_str) {
+                                eprintln!(
+                                    "[agentguard-firewall] SANITIZED raw prompt injection in SSE data line: {attack_reason}"
+                                );
+                                logger_clone.log_event(
+                                    "prompt_injection_in_output",
+                                    "HIGH",
+                                    &format!(
+                                        "Sanitized raw prompt injection in SSE data line: {attack_reason}"
+                                    ),
+                                );
+                                if let Some(ref m) = metrics_clone {
+                                    m.inc_prompt_injections();
+                                }
+                                lines.push(format!(
+                                    "data: [UNTRUSTED_CONTENT_FLAGGED_BY_AGENTGUARD: potential prompt injection sanitized: {attack_reason}]"
+                                ));
+                                modified = true;
+                                continue;
+                            }
+                        }
+                        lines.push(line.to_string());
+                    }
+                    if modified {
+                        let trailing_newline = if text.ends_with("\n\n") {
+                            "\n\n"
+                        } else if text.ends_with('\n') {
+                            "\n"
+                        } else {
+                            ""
+                        };
+                        text = format!("{}{}", lines.join("\n"), trailing_newline);
+                    }
+                } else if let Ok(mut json_val) = serde_json::from_str::<serde_json::Value>(&text) {
                     if let Some(attack_reason) = firewall.sanitize_payload(&mut json_val) {
                         eprintln!(
                             "[agentguard-firewall] SANITIZED prompt injection in SSE stream: {attack_reason}"
