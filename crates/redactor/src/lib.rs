@@ -247,13 +247,19 @@ mod tests {
     #[test]
     fn test_redact_stripe_and_slack_and_db() {
         let redactor = SecretRedactor::new();
-        let stripe_key = format!("{}_{}_{}", "sk", "live", "51A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6");
+        let stripe_key = format!(
+            "{}_{}_{}",
+            "sk", "live", "51A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"
+        );
         let stripe = format!("Using stripe key {stripe_key}");
         let (res_stripe, count1) = redactor.redact_text(&stripe);
         assert_eq!(count1, 1);
         assert!(res_stripe.contains("[REDACTED]"));
 
-        let slack_token = format!("{}-{}-{}-{}", "xoxb", "123456789012", "123456789012", "abcdefghijklmnopqrstuvwx");
+        let slack_token = format!(
+            "{}-{}-{}-{}",
+            "xoxb", "123456789012", "123456789012", "abcdefghijklmnopqrstuvwx"
+        );
         let slack = format!("Slack token: {slack_token}");
         let (res_slack, count2) = redactor.redact_text(&slack);
         assert_eq!(count2, 1);

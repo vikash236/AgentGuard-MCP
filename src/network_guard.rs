@@ -418,12 +418,42 @@ mod tests {
     async fn test_blocks_localhost_and_private_ips() {
         let guard = NetworkGuard::default();
 
-        assert!(guard.validate_url_async("http://127.0.0.1:8080/admin").await.is_err());
-        assert!(guard.validate_url_async("http://localhost:3000/api").await.is_err());
-        assert!(guard.validate_url_async("http://192.168.1.1/router").await.is_err());
-        assert!(guard.validate_url_async("http://10.0.0.5:9000/internal").await.is_err());
-        assert!(guard.validate_url_async("http://172.16.5.1/secret").await.is_err());
-        assert!(guard.validate_url_async("file:///etc/passwd").await.is_err());
+        assert!(
+            guard
+                .validate_url_async("http://127.0.0.1:8080/admin")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url_async("http://localhost:3000/api")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url_async("http://192.168.1.1/router")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url_async("http://10.0.0.5:9000/internal")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url_async("http://172.16.5.1/secret")
+                .await
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url_async("file:///etc/passwd")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -438,11 +468,26 @@ mod tests {
                 .is_err()
         );
         // Decimal metadata (2852039166 = 169.254.169.254)
-        assert!(guard.validate_url_async("http://2852039166/").await.is_err());
+        assert!(
+            guard
+                .validate_url_async("http://2852039166/")
+                .await
+                .is_err()
+        );
         // Hex loopback (0x7f000001 = 127.0.0.1)
-        assert!(guard.validate_url_async("http://0x7f000001/").await.is_err());
+        assert!(
+            guard
+                .validate_url_async("http://0x7f000001/")
+                .await
+                .is_err()
+        );
         // Octal loopback (0177.0.0.1 = 127.0.0.1)
-        assert!(guard.validate_url_async("http://0177.0.0.1/").await.is_err());
+        assert!(
+            guard
+                .validate_url_async("http://0177.0.0.1/")
+                .await
+                .is_err()
+        );
         // Shortened dotted form (127.1 = 127.0.0.1)
         assert!(guard.validate_url_async("http://127.1/").await.is_err());
     }
@@ -482,8 +527,18 @@ mod tests {
             vec!["malicious.github.com".to_string()],
         );
 
-        assert!(guard.validate_url_async("https://github.com/anthropic").await.is_ok());
-        assert!(guard.validate_url_async("https://api.github.com/user").await.is_ok());
+        assert!(
+            guard
+                .validate_url_async("https://github.com/anthropic")
+                .await
+                .is_ok()
+        );
+        assert!(
+            guard
+                .validate_url_async("https://api.github.com/user")
+                .await
+                .is_ok()
+        );
         assert!(
             guard
                 .validate_url_async("https://crates.io/api/v1/crates")
@@ -499,6 +554,11 @@ mod tests {
                 .is_err()
         );
         // Domain not in allowed list should fail
-        assert!(guard.validate_url_async("https://google.com/search").await.is_err());
+        assert!(
+            guard
+                .validate_url_async("https://google.com/search")
+                .await
+                .is_err()
+        );
     }
 }
