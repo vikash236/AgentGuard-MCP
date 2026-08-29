@@ -38,6 +38,22 @@ pub struct PromptFirewallConfigSection {
     pub custom_patterns: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NetworkGuardConfigSection {
+    pub enable_network_guard: Option<bool>,
+    pub block_private_ips: Option<bool>,
+    pub block_cloud_metadata: Option<bool>,
+    pub allowed_domains: Option<Vec<String>>,
+    pub denied_domains: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ApprovalConfigSection {
+    pub enable_approval: Option<bool>,
+    pub require_tools: Option<Vec<String>>,
+    pub timeout_seconds: Option<u64>,
+}
+
 /// Native TOML Configuration structure for AgentGuard-MCP (`agentguard.toml`).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct AgentGuardConfig {
@@ -46,6 +62,8 @@ pub struct AgentGuardConfig {
     pub gateway: Option<GatewayConfigSection>,
     pub policy: Option<PolicyConfigSection>,
     pub prompt_firewall: Option<PromptFirewallConfigSection>,
+    pub network_guard: Option<NetworkGuardConfigSection>,
+    pub approval: Option<ApprovalConfigSection>,
 }
 
 impl AgentGuardConfig {
@@ -96,6 +114,17 @@ mod tests {
 
         [policy]
         audit_log_file = "./audit.log"
+
+        [network_guard]
+        enable_network_guard = true
+        block_private_ips = true
+        block_cloud_metadata = true
+        allowed_domains = ["api.github.com"]
+
+        [approval]
+        enable_approval = true
+        require_tools = ["delete_file", "execute_command"]
+        timeout_seconds = 45
         "#;
 
         let config: AgentGuardConfig = toml::from_str(toml_str).unwrap();
@@ -111,6 +140,14 @@ mod tests {
         assert_eq!(
             config.policy.as_ref().unwrap().audit_log_file,
             Some(PathBuf::from("./audit.log"))
+        );
+        assert_eq!(
+            config.network_guard.as_ref().unwrap().enable_network_guard,
+            Some(true)
+        );
+        assert_eq!(
+            config.approval.as_ref().unwrap().require_tools,
+            Some(vec!["delete_file".to_string(), "execute_command".to_string()])
         );
     }
 }

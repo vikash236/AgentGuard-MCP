@@ -9,6 +9,10 @@ pub struct MetricsCollector {
     jail_violations_count: AtomicU64,
     policy_violations_count: AtomicU64,
     prompt_injections_count: AtomicU64,
+    network_violations_count: AtomicU64,
+    approvals_prompted_count: AtomicU64,
+    approvals_granted_count: AtomicU64,
+    approvals_rejected_count: AtomicU64,
     auth_failures_count: AtomicU64,
     rate_limit_rejections: AtomicU64,
     total_latency_us: AtomicU64,
@@ -21,6 +25,10 @@ pub struct MetricsSnapshot {
     pub jail_violations_count: u64,
     pub policy_violations_count: u64,
     pub prompt_injections_count: u64,
+    pub network_violations_count: u64,
+    pub approvals_prompted_count: u64,
+    pub approvals_granted_count: u64,
+    pub approvals_rejected_count: u64,
     pub auth_failures_count: u64,
     pub rate_limit_rejections: u64,
     pub total_latency_us: u64,
@@ -54,6 +62,26 @@ impl MetricsCollector {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn inc_network_violations(&self) {
+        self.network_violations_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_approvals_prompted(&self) {
+        self.approvals_prompted_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_approvals_granted(&self) {
+        self.approvals_granted_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_approvals_rejected(&self) {
+        self.approvals_rejected_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn inc_auth_failures(&self) {
         self.auth_failures_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -84,6 +112,10 @@ impl MetricsCollector {
             jail_violations_count: self.jail_violations_count.load(Ordering::Relaxed),
             policy_violations_count: self.policy_violations_count.load(Ordering::Relaxed),
             prompt_injections_count: self.prompt_injections_count.load(Ordering::Relaxed),
+            network_violations_count: self.network_violations_count.load(Ordering::Relaxed),
+            approvals_prompted_count: self.approvals_prompted_count.load(Ordering::Relaxed),
+            approvals_granted_count: self.approvals_granted_count.load(Ordering::Relaxed),
+            approvals_rejected_count: self.approvals_rejected_count.load(Ordering::Relaxed),
             auth_failures_count: self.auth_failures_count.load(Ordering::Relaxed),
             rate_limit_rejections: self.rate_limit_rejections.load(Ordering::Relaxed),
             total_latency_us: lat,
@@ -109,6 +141,18 @@ impl MetricsCollector {
              # HELP agentguard_prompt_injections_total Total prompt injection attack attempts blocked\n\
              # TYPE agentguard_prompt_injections_total counter\n\
              agentguard_prompt_injections_total {}\n\n\
+             # HELP agentguard_network_violations_total Total SSRF and network policy violations blocked\n\
+             # TYPE agentguard_network_violations_total counter\n\
+             agentguard_network_violations_total {}\n\n\
+             # HELP agentguard_approvals_prompted_total Total tool calls requiring human approval\n\
+             # TYPE agentguard_approvals_prompted_total counter\n\
+             agentguard_approvals_prompted_total {}\n\n\
+             # HELP agentguard_approvals_granted_total Total tool calls approved by operator\n\
+             # TYPE agentguard_approvals_granted_total counter\n\
+             agentguard_approvals_granted_total {}\n\n\
+             # HELP agentguard_approvals_rejected_total Total tool calls rejected or timed out\n\
+             # TYPE agentguard_approvals_rejected_total counter\n\
+             agentguard_approvals_rejected_total {}\n\n\
              # HELP agentguard_auth_failures_total Total authentication failures\n\
              # TYPE agentguard_auth_failures_total counter\n\
              agentguard_auth_failures_total {}\n\n\
@@ -123,6 +167,10 @@ impl MetricsCollector {
             snap.jail_violations_count,
             snap.policy_violations_count,
             snap.prompt_injections_count,
+            snap.network_violations_count,
+            snap.approvals_prompted_count,
+            snap.approvals_granted_count,
+            snap.approvals_rejected_count,
             snap.auth_failures_count,
             snap.rate_limit_rejections,
             snap.total_latency_us
@@ -142,15 +190,23 @@ mod tests {
         collector.inc_requests();
         collector.inc_redactions();
         collector.inc_jail_violations();
+        collector.inc_network_violations();
+        collector.inc_approvals_prompted();
+        collector.inc_approvals_granted();
         collector.record_latency(150);
 
         let snap = collector.snapshot();
         assert_eq!(snap.requests_intercepted, 1);
         assert_eq!(snap.redactions_count, 1);
         assert_eq!(snap.jail_violations_count, 1);
+        assert_eq!(snap.network_violations_count, 1);
+        assert_eq!(snap.approvals_prompted_count, 1);
+        assert_eq!(snap.approvals_granted_count, 1);
         assert_eq!(snap.total_latency_us, 150);
 
         let prom = collector.to_prometheus();
         assert!(prom.contains("agentguard_requests_intercepted_total 1"));
+        assert!(prom.contains("agentguard_network_violations_total 1"));
+        assert!(prom.contains("agentguard_approvals_prompted_total 1"));
     }
 }

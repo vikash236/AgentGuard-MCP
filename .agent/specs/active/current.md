@@ -63,6 +63,23 @@
 - [x] Integrate prompt firewall inspection into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
 - [x] Add E2E integration test suite (`tests/prompt_firewall_test.rs`).
 
+## Completed: Phase 9 — SSRF & Network Egress Guardrails
+
+- [x] Implement `NetworkGuard` struct (`src/network_guard.rs`) for detecting and blocking SSRF targets, private RFC1918 subnets, cloud metadata (`169.254.169.254`), and domain allowlist/denylist enforcement.
+- [x] Add `NetworkGuardConfigSection` (`src/config.rs`) for configuring network egress policies.
+- [x] Add `network_violations_count` telemetry counter (`src/metrics.rs`).
+- [x] Integrate network guard evaluation into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
+- [x] Add E2E integration test suite (`tests/network_guard_test.rs`).
+
+## Completed: Phase 10 — Human-in-the-Loop (HITL) Interactive Approval Engine
+
+- [x] Implement `ApprovalEngine` struct (`src/approval.rs`) with direct console prompting (`CONIN$` / `/dev/tty`), async timeouts, and programmatic approval hooks.
+- [x] Add `ApprovalConfigSection` (`src/config.rs`) for configuring sensitive tool lists and timeout durations.
+- [x] Add `approvals_prompted_count`, `approvals_granted_count`, `approvals_rejected_count` telemetry counters (`src/metrics.rs`).
+- [x] Integrate approval engine into stdio proxy (`src/proxy/mod.rs`) and CLI (`src/main.rs`).
+- [x] Add E2E integration test suite (`tests/approval_test.rs`).
+
+
 
 
 

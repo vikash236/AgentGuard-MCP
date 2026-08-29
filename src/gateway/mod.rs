@@ -1,5 +1,6 @@
 use crate::audit_logger::AuditLogger;
 use crate::metrics::SharedMetrics;
+use crate::network_guard::NetworkGuard;
 use crate::policy_engine::PolicyEngine;
 use crate::prompt_firewall::PromptFirewall;
 use agentguard_jail::PathJail;
@@ -31,6 +32,7 @@ pub struct GatewayConfig {
     pub metrics: Option<SharedMetrics>,
     pub policy_engine: Option<Arc<PolicyEngine>>,
     pub prompt_firewall: Option<Arc<PromptFirewall>>,
+    pub network_guard: Option<Arc<NetworkGuard>>,
 }
 
 #[derive(Clone)]
@@ -75,6 +77,7 @@ struct AppState {
     metrics: Option<SharedMetrics>,
     policy_engine: Option<Arc<PolicyEngine>>,
     prompt_firewall: Option<Arc<PromptFirewall>>,
+    network_guard: Option<Arc<NetworkGuard>>,
     client: reqwest::Client,
 }
 
@@ -93,6 +96,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), Box<dyn std::error
         metrics: config.metrics,
         policy_engine: config.policy_engine,
         prompt_firewall: config.prompt_firewall,
+        network_guard: config.network_guard,
         client: reqwest::Client::builder().build()?,
     };
 
@@ -125,6 +129,9 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), Box<dyn std::error
     }
     if state.prompt_firewall.is_some() {
         eprintln!("[agentguard] Prompt Injection Firewall ACTIVE");
+    }
+    if state.network_guard.is_some() {
+        eprintln!("[agentguard] Network Guard & SSRF Firewall ACTIVE");
     }
 
     let app = Router::new()
@@ -300,11 +307,12 @@ async fn message_handler(
 ) -> Result<Response, (StatusCode, &'static str)> {
     check_auth_and_rate(&headers, &state, "/message").await?;
 
-    // 1. Path Jail & Policy Engine Inspection for tools/call
+    // 1. Path Jail & Policy Engine & Network Guard Inspection for tools/call
     if let Some(err_resp) = inspect_http_payload(
         state.jail.as_deref(),
         state.policy_engine.as_deref(),
         state.prompt_firewall.as_deref(),
+        state.network_guard.as_deref(),
         &payload,
         &state.audit_logger,
         state.metrics.as_ref(),
@@ -354,10 +362,12 @@ async fn message_handler(
     }
 }
 
+#[allow(clippy::collapsible_if)]
 fn inspect_http_payload(
     jail: Option<&PathJail>,
     policy_engine: Option<&PolicyEngine>,
     prompt_firewall: Option<&PromptFirewall>,
+    network_guard: Option<&NetworkGuard>,
     payload: &serde_json::Value,
     logger: &AuditLogger,
     metrics: Option<&SharedMetrics>,
@@ -369,6 +379,7 @@ fn inspect_http_payload(
 
     let tool_params = payload.get("params")?;
     let req_id = payload.get("id").cloned().unwrap_or(serde_json::Value::Null);
+    let tool_name = tool_params.get("name").and_then(|n| n.as_str()).unwrap_or("");
 
     // 1. Evaluate Prompt Injection Firewall
     if let Some(attack_reason) = prompt_firewall.and_then(|f| f.inspect_payload(tool_params)) {
@@ -395,7 +406,6 @@ fn inspect_http_payload(
 
     // 2. Evaluate Policy Engine
     if let Some(engine) = policy_engine {
-        let tool_name = tool_params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         if let Err(policy_err) = engine.evaluate_tool_call(tool_name, tool_params) {
             eprintln!("[agentguard-policy] REJECTED tool call over HTTP: {policy_err}");
             logger.log_event(
@@ -419,7 +429,32 @@ fn inspect_http_payload(
         }
     }
 
-    // 2. Evaluate Path Jail
+    // 3. Evaluate Network Guard
+    if let Some(guard) = network_guard {
+        if let Err(net_err) = guard.inspect_payload(tool_params) {
+            eprintln!("[agentguard-network] REJECTED tool call over HTTP '{tool_name}': {net_err}");
+            logger.log_event(
+                "network_violation",
+                "HIGH",
+                &format!("REJECTED tool call over HTTP '{tool_name}': {net_err}"),
+            );
+            if let Some(m) = metrics {
+                m.inc_network_violations();
+            }
+
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": format!("NetworkViolation: {net_err}")
+                }
+            });
+            return Some(err_resp);
+        }
+    }
+
+    // 4. Evaluate Path Jail
     if let Some(Err(jail_err)) = jail.map(|j| j.inspect_json_arguments(tool_params)) {
         eprintln!("[agentguard-jail] REJECTED tool call over HTTP: {jail_err}");
         logger.log_event(

@@ -1,5 +1,7 @@
+use crate::approval::ApprovalEngine;
 use crate::audit_logger::AuditLogger;
 use crate::metrics::SharedMetrics;
+use crate::network_guard::NetworkGuard;
 use crate::policy_engine::PolicyEngine;
 use crate::prompt_firewall::PromptFirewall;
 use agentguard_jail::PathJail;
@@ -19,6 +21,8 @@ pub async fn run_proxy(
     metrics: Option<SharedMetrics>,
     policy_engine: Option<Arc<PolicyEngine>>,
     prompt_firewall: Option<Arc<PromptFirewall>>,
+    network_guard: Option<Arc<NetworkGuard>>,
+    approval_engine: Option<Arc<ApprovalEngine>>,
     command: String,
     args: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +42,12 @@ pub async fn run_proxy(
     }
     if prompt_firewall.is_some() {
         eprintln!("[agentguard] Prompt Injection Firewall ENABLED");
+    }
+    if network_guard.is_some() {
+        eprintln!("[agentguard] Network Guard & SSRF Firewall ENABLED");
+    }
+    if approval_engine.is_some() {
+        eprintln!("[agentguard] Human-in-the-Loop (HITL) Approval Engine ENABLED");
     }
     eprintln!(
         "[agentguard] Spawning MCP server: {} {}",
@@ -148,7 +158,11 @@ pub async fn run_proxy(
             metrics.as_ref(),
             policy_engine.as_deref(),
             prompt_firewall.as_deref(),
-        ) {
+            network_guard.as_deref(),
+            approval_engine.as_deref(),
+        )
+        .await
+        {
             let mut stdout = tokio::io::stdout();
             let resp_str = serde_json::to_string(&err_resp)?;
             stdout.write_all(format!("{resp_str}\n").as_bytes()).await?;
@@ -169,13 +183,16 @@ pub async fn run_proxy(
     Ok(())
 }
 
-fn handle_incoming_frame(
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+async fn handle_incoming_frame(
     jail: &PathJail,
     line: &str,
     logger: &AuditLogger,
     metrics: Option<&SharedMetrics>,
     policy_engine: Option<&PolicyEngine>,
     prompt_firewall: Option<&PromptFirewall>,
+    network_guard: Option<&NetworkGuard>,
+    approval_engine: Option<&ApprovalEngine>,
 ) -> Option<serde_json::Value> {
     let msg: serde_json::Value = serde_json::from_str(line).ok()?;
 
@@ -185,6 +202,7 @@ fn handle_incoming_frame(
 
     let params = msg.get("params")?;
     let req_id = msg.get("id").cloned().unwrap_or(serde_json::Value::Null);
+    let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
 
     // 1. Evaluate Prompt Injection Firewall
     if let Some(attack_reason) = prompt_firewall.and_then(|f| f.inspect_payload(params)) {
@@ -211,7 +229,6 @@ fn handle_incoming_frame(
 
     // 2. Evaluate Policy Engine (allowed/denied tools, argument regex rules)
     if let Some(engine) = policy_engine {
-        let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         if let Err(policy_err) = engine.evaluate_tool_call(tool_name, params) {
             eprintln!("[agentguard-policy] REJECTED tool call '{tool_name}': {policy_err}");
             logger.log_event(
@@ -235,7 +252,32 @@ fn handle_incoming_frame(
         }
     }
 
-    // 2. Evaluate Path Jail
+    // 3. Evaluate Network Guard (SSRF & egress domain controls)
+    if let Some(guard) = network_guard {
+        if let Err(net_err) = guard.inspect_payload(params) {
+            eprintln!("[agentguard-network] REJECTED tool call '{tool_name}': {net_err}");
+            logger.log_event(
+                "network_violation",
+                "HIGH",
+                &format!("REJECTED tool call '{tool_name}': {net_err}"),
+            );
+            if let Some(m) = metrics {
+                m.inc_network_violations();
+            }
+
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": format!("NetworkViolation: {net_err}")
+                }
+            });
+            return Some(err_resp);
+        }
+    }
+
+    // 4. Evaluate Path Jail
     if let Err(jail_err) = jail.inspect_json_arguments(params) {
         eprintln!("[agentguard-jail] REJECTED tool call: {jail_err}");
         logger.log_event(
@@ -256,6 +298,39 @@ fn handle_incoming_frame(
             }
         });
         return Some(err_resp);
+    }
+
+    // 5. Evaluate Human-In-The-Loop Approval Engine
+    if let Some(approval) = approval_engine {
+        if approval.requires_approval(tool_name) {
+            if let Some(m) = metrics {
+                m.inc_approvals_prompted();
+            }
+
+            if let Err(approval_err) = approval.request_approval(tool_name, params).await {
+                eprintln!("[agentguard-approval] DENIED tool call '{tool_name}': {approval_err}");
+                logger.log_event(
+                    "approval_denied",
+                    "MEDIUM",
+                    &format!("DENIED tool call '{tool_name}': {approval_err}"),
+                );
+                if let Some(m) = metrics {
+                    m.inc_approvals_rejected();
+                }
+
+                let err_resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32602,
+                        "message": format!("ApprovalDenied: {approval_err}")
+                    }
+                });
+                return Some(err_resp);
+            } else if let Some(m) = metrics {
+                m.inc_approvals_granted();
+            }
+        }
     }
 
     None

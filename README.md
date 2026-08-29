@@ -55,71 +55,54 @@ Traditional application security assumes a human operator making deliberate API 
 
 ## Architecture
 
-Four modules, each designed to stop a specific attack chain:
+AgentGuard-MCP provides defense-in-depth across the entire AI agent tool-calling lifecycle:
 
 | Module | Attack It Stops | How |
 |--------|----------------|-----|
-| **Auditor** (`crates/auditor/`) | Tool poisoning via malicious manifests | Parses MCP tool definitions and flags missing input validation schemas, unconstrained `exec` parameters, and dangerous API surface patterns — *before* the server is ever connected |
-| **Jail** (`crates/jail/`) | Path traversal (`../../etc/passwd`, `C:\Windows\System32`) | Canonicalizes all file paths and enforces chroot-style confinement to a declared project root. Symlink resolution prevents escape via junction points |
-| **Proxy** (`src/proxy/`) | Command injection via shell metacharacters (`;`, `&&`, `$(...)`, `` ` ``) | Intercepts JSON-RPC streams over stdio/HTTP, inspects tool arguments against configurable deny-lists, and strips or rejects dangerous patterns before forwarding |
-| **Redactor** (`crates/redactor/`) | Credential exfiltration via tool outputs | Scans tool return values for AWS keys, JWT tokens, SSH private keys, and `.env` file contents using regex + Shannon entropy detection, replacing matches with `[REDACTED]` before they enter the agent's context window |
-
-### Where AgentGuard-MCP Fits in the Ecosystem
-
-Existing tools address *parts* of the MCP security problem, but none cover the full attack lifecycle:
-
-| Tool | Strength | Gap AgentGuard Fills |
-|------|----------|---------------------|
-| `mcp-context-protector` (Trail of Bits) | Output sanitization, trust-on-first-use pinning | No runtime argument inspection, no path jailing, no static manifest audit |
-| `pipelock` | Network-level exfiltration detection | No filesystem or shell injection enforcement |
-| `nilbox` | VM-grade isolation sandbox | Heavy-weight (full VM), no tool-argument-level policy |
-| Enterprise gateways (ThinkWatch, Cortex) | RBAC, rate limiting, audit logging | Closed-source, enterprise-only, not developer-local |
-
-**AgentGuard-MCP's niche:** A lightweight, zero-dependency, developer-local security harness providing defense-in-depth across the *entire* tool-call lifecycle — from static schema auditing through runtime argument enforcement to output redaction — without requiring containers, VMs, or cloud infrastructure.
-
----
-
-## Why Rust
-
-This is not "Rust for Rust's sake." The requirements demand it:
-
-- **Zero-copy JSON-RPC interception.** The proxy sits in the hot path of every tool call. Adding latency to an interactive coding session is unacceptable. Rust's `serde_json` with zero-allocation buffering keeps overhead under 1ms per call.
-- **Memory safety without a GC.** The proxy handles untrusted input (tool arguments, server responses) on every message. A buffer overflow in the proxy *is* a security vulnerability. Rust eliminates this class of bugs at compile time.
-- **Async stdio multiplexing.** MCP's stdio transport requires precise byte-level stream management. Tokio's async I/O provides the exact primitive needed without Node.js or Python asyncio overhead.
-- **Single static binary.** `cargo build --release` produces one binary with zero runtime dependencies. Users run `agentguard proxy -- npx server` — no Python venvs, no Docker, no Node modules.
-
----
-
-## Technical Skills Demonstrated
-
-Each component maps to a specific systems-security competency:
-
-| Component | Competency |
-|-----------|-----------|
-| JSON-RPC stream interceptor | Protocol-level engineering, async I/O, byte-stream parsing |
-| Path canonicalization + chroot jail | OS filesystem security, symlink attack prevention, Windows/POSIX portability |
-| Regex + entropy secret scanner | Applied cryptography awareness, DFA pattern matching, false-positive tuning |
-| Static manifest auditor | Schema analysis, security-by-design evaluation, threat modeling |
-| Full proxy architecture | Defense-in-depth thinking, chokepoint identification, zero-trust design |
+| **Auditor** (`crates/auditor/`) | Tool poisoning via malicious manifests | Parses MCP tool definitions and flags missing input validation schemas, unconstrained `exec` parameters, and dangerous API surface patterns before connection |
+| **Jail** (`crates/jail/`) | Path traversal (`../../etc/passwd`, `C:\Windows\System32`) | Canonicalizes all file paths and enforces chroot-style confinement to a declared project root with symlink escape prevention |
+| **Proxy** (`src/proxy/`) | Command injection & protocol tampering | Intercepts JSON-RPC streams over stdio with sub-millisecond overhead and zero stdout pollution |
+| **Redactor** (`crates/redactor/`) | Credential exfiltration via tool outputs | Scans tool return values for AWS keys, JWT tokens, SSH private keys, and `.env` credentials using regex + Shannon entropy detection |
+| **Gateway** (`src/gateway/`) | Remote MCP server exposure & abuse | HTTP/SSE reverse proxy with Bearer authentication and sliding-window rate limiting |
+| **Fuzzer** (`crates/fuzzer/`) | Zero-day vulnerabilities & untested schemas | Automated red-teaming mutation engine & sandbox policy generator |
+| **Policy Engine** (`src/policy_engine.rs`) | Unauthorized tool execution | Enforces tool allowlists, denylists, and per-argument regex guardrails |
+| **Prompt Firewall** (`src/prompt_firewall.rs`) | Direct & indirect prompt injection | Blocks instruction overrides, jailbreak personas, and ChatML/Llama delimiter hijacking |
+| **Network Guard** (`src/network_guard.rs`) | SSRF & unauthorized egress | Blocks private RFC1918 IPs, cloud metadata endpoints (`169.254.169.254`), and enforces domain allowlists |
+| **Approval Engine** (`src/approval.rs`) | Destructive autonomous operations | Human-in-the-Loop interactive terminal prompt with configurable timeouts for high-risk actions |
 
 ---
 
 ## Quick Start
 
 ```bash
-# Audit an MCP server manifest for unsafe tool definitions
+# 1. Audit an MCP server manifest for unsafe tool definitions
 agentguard audit manifest.json
 
-# Proxy a stdio MCP server with path jailing and secret redaction
-agentguard proxy --jail /path/to/project -- npx @modelcontextprotocol/server-filesystem
+# 2. Proxy a stdio MCP server with full security guardrails
+agentguard proxy \
+  --jail /path/to/project \
+  --redact \
+  --prompt-firewall \
+  --network-guard \
+  --approval \
+  -- npx @modelcontextprotocol/server-filesystem /path/to/project
+
+# 3. Run HTTP/SSE Gateway Proxy with authentication & rate limiting
+agentguard gateway \
+  --target http://127.0.0.1:3000 \
+  --port 8080 \
+  --token secret-bearer-token \
+  --rate-limit 120 \
+  --jail /path/to/project \
+  --prompt-firewall \
+  --network-guard
+
+# 4. Fuzz an MCP manifest against security attack vectors
+agentguard fuzz manifest.json
+
+# 5. Generate a locked-down agentguard.toml policy
+agentguard generate-policy manifest.json --output agentguard.toml
 ```
-
-### 30-Minute Path to First Demo
-
-1. **Understand the protocol:** Read the [MCP specification](https://spec.modelcontextprotocol.io/) — specifically the JSON-RPC message format over stdio.
-2. **Build a vulnerable target:** Create a mock MCP server with a deliberately unsafe `read_file` tool (no path validation).
-3. **Interpose AgentGuard:** Route the client through AgentGuard's proxy and watch it block `../../etc/passwd` in real-time.
-4. **Record the proof:** Capture a terminal recording showing the blocked exploit.
 
 ---
 
@@ -127,11 +110,17 @@ agentguard proxy --jail /path/to/project -- npx @modelcontextprotocol/server-fil
 
 | Phase | Title | Status |
 |-------|-------|--------|
-| **P0** | Static Manifest Auditor — CLI scanner for MCP tool definitions | 🔄 Active |
-| **P1** | Stdio Proxy & Path Jail — Tokio JSON-RPC interceptor with chroot enforcement | ⏳ Pending |
-| **P2** | Secret Redactor — Real-time regex + entropy payload scanner | ⏳ Pending |
-| **P3** | HTTP/SSE Gateway — Support for remote MCP servers over SSE/WebSocket | ⏳ Pending |
-| **P4** | Fuzzing & Red Team — Automated path traversal and injection payload generator | ⏳ Pending |
+| **P0** | Static Manifest Auditor — CLI scanner for MCP tool definitions | ✅ Complete |
+| **P1** | Stdio Proxy & Path Jail — Tokio JSON-RPC interceptor with chroot enforcement | ✅ Complete |
+| **P2** | Secret Redactor — Real-time regex + entropy payload scanner | ✅ Complete |
+| **P3** | HTTP/SSE Gateway — Support for remote MCP servers over SSE/WebSocket | ✅ Complete |
+| **P4** | Fuzzing & Red Team — Automated mutation engine & policy generator | ✅ Complete |
+| **P5** | Policy Config Engine & Audit Logger — TOML loader & structured JSON logger | ✅ Complete |
+| **P6** | Prometheus Metrics & Dynamic Hot-Reload — `/metrics` endpoint & telemetry | ✅ Complete |
+| **P7** | Dynamic Tool Call Policy Engine — Tool allowlists/denylists & argument regex | ✅ Complete |
+| **P8** | Prompt Injection Firewall — LLM jailbreak & delimiter hijacking detector | ✅ Complete |
+| **P9** | SSRF & Network Egress Guardrails — Cloud metadata & private IP protection | ✅ Complete |
+| **P10** | Human-In-The-Loop Approval Engine — Interactive confirmation & safety gates | ✅ Complete |
 
 ---
 
@@ -146,3 +135,4 @@ agentguard proxy --jail /path/to/project -- npx @modelcontextprotocol/server-fil
 ## License
 
 [MIT](LICENSE)
+

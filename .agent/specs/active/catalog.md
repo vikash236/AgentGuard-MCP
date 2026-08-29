@@ -11,3 +11,5 @@
 | **P6** | Prometheus Metrics & Dynamic Hot-Reload | Real-time Prometheus/JSON metrics endpoint and dynamic policy hot-reloading | Complete |
 | **P7** | Dynamic Tool Call Policy Engine | Runtime authorization enforcement, tool allowlists/blocklists, & parameter regex guardrails | Complete |
 | **P8** | Prompt Injection Firewall | LLM payload security inspection, jailbreak interception, & prompt override detection | Complete |
+| **P9** | SSRF & Network Egress Guardrails | Outbound URL inspection, cloud metadata blocking, RFC1918 private IP rejection, and domain controls | Complete |
+| **P10** | Human-in-the-Loop Approval Engine | Interactive operator confirmation for high-consequence tools with timeout & programmatic hooks | Complete |

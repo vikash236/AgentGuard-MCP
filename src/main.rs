@@ -1,17 +1,21 @@
+mod approval;
 mod audit_logger;
 mod config;
 mod gateway;
 mod metrics;
+mod network_guard;
 mod policy_engine;
 mod prompt_firewall;
 mod proxy;
 
 use agentguard_jail::PathJail;
 use agentguard_redactor::SecretRedactor;
+use approval::ApprovalEngine;
 use audit_logger::AuditLogger;
 use clap::{Parser, Subcommand};
 use config::AgentGuardConfig;
 use metrics::MetricsCollector;
+use network_guard::NetworkGuard;
 use policy_engine::PolicyEngine;
 use prompt_firewall::PromptFirewall;
 use std::path::PathBuf;
@@ -64,6 +68,14 @@ enum Commands {
         #[arg(long)]
         prompt_firewall: bool,
 
+        /// Enable SSRF and network egress guardrails.
+        #[arg(long)]
+        network_guard: bool,
+
+        /// Enable Human-in-the-Loop (HITL) interactive approval engine.
+        #[arg(long)]
+        approval: bool,
+
         /// Executable command to launch MCP server.
         #[arg(required = true)]
         command: String,
@@ -114,6 +126,10 @@ enum Commands {
         /// Enable prompt injection firewall.
         #[arg(long)]
         prompt_firewall: bool,
+
+        /// Enable SSRF and network egress guardrails.
+        #[arg(long)]
+        network_guard: bool,
     },
 
     /// Dynamically fuzz an MCP tool manifest against security attack vectors.
@@ -164,6 +180,8 @@ async fn main() {
             redact,
             metrics,
             prompt_firewall,
+            network_guard,
+            approval,
             command,
             args,
         } => {
@@ -252,6 +270,76 @@ async fn main() {
                 None
             };
 
+            let enable_net = network_guard
+                || loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.enable_network_guard)
+                    .unwrap_or(false);
+
+            let network_guard_obj = if enable_net {
+                let block_priv = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.block_private_ips)
+                    .unwrap_or(true);
+                let block_meta = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.block_cloud_metadata)
+                    .unwrap_or(true);
+                let allowed_doms = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.allowed_domains.clone())
+                    .unwrap_or_default();
+                let denied_doms = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.denied_domains.clone())
+                    .unwrap_or_default();
+                Some(Arc::new(NetworkGuard::new(
+                    block_priv,
+                    block_meta,
+                    allowed_doms,
+                    denied_doms,
+                )))
+            } else {
+                None
+            };
+
+            let enable_appr = approval
+                || loaded_config
+                    .approval
+                    .as_ref()
+                    .and_then(|a| a.enable_approval)
+                    .unwrap_or(false);
+
+            let approval_engine_obj = if enable_appr {
+                let req_tools = loaded_config
+                    .approval
+                    .as_ref()
+                    .and_then(|a| a.require_tools.clone())
+                    .unwrap_or_else(|| {
+                        vec![
+                            "execute_command".to_string(),
+                            "bash".to_string(),
+                            "sh".to_string(),
+                            "delete_file".to_string(),
+                            "remove_file".to_string(),
+                            "drop_table".to_string(),
+                        ]
+                    });
+                let timeout_s = loaded_config
+                    .approval
+                    .as_ref()
+                    .and_then(|a| a.timeout_seconds)
+                    .unwrap_or(30);
+                Some(Arc::new(ApprovalEngine::new(req_tools, timeout_s)))
+            } else {
+                None
+            };
+
             if let Err(e) = proxy::run_proxy(
                 jail_path,
                 final_redact,
@@ -259,6 +347,8 @@ async fn main() {
                 metrics_collector,
                 policy_engine_obj,
                 prompt_firewall_obj,
+                network_guard_obj,
+                approval_engine_obj,
                 command,
                 args,
             )
@@ -279,6 +369,7 @@ async fn main() {
             redact,
             metrics,
             prompt_firewall,
+            network_guard,
         } => {
             let loaded_config = if let Some(ref cfg_path) = config {
                 match AgentGuardConfig::load_from_file(cfg_path) {
@@ -393,6 +484,44 @@ async fn main() {
                 None
             };
 
+            let enable_net = network_guard
+                || loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.enable_network_guard)
+                    .unwrap_or(false);
+
+            let network_guard_obj = if enable_net {
+                let block_priv = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.block_private_ips)
+                    .unwrap_or(true);
+                let block_meta = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.block_cloud_metadata)
+                    .unwrap_or(true);
+                let allowed_doms = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.allowed_domains.clone())
+                    .unwrap_or_default();
+                let denied_doms = loaded_config
+                    .network_guard
+                    .as_ref()
+                    .and_then(|n| n.denied_domains.clone())
+                    .unwrap_or_default();
+                Some(Arc::new(NetworkGuard::new(
+                    block_priv,
+                    block_meta,
+                    allowed_doms,
+                    denied_doms,
+                )))
+            } else {
+                None
+            };
+
             let gateway_config = gateway::GatewayConfig {
                 port: final_port,
                 target_url,
@@ -404,6 +533,7 @@ async fn main() {
                 metrics: metrics_collector,
                 policy_engine: policy_engine_obj,
                 prompt_firewall: prompt_firewall_obj,
+                network_guard: network_guard_obj,
             };
 
             if let Err(e) = gateway::run_gateway(gateway_config).await {

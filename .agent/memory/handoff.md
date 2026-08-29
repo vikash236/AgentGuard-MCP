@@ -10,15 +10,19 @@
 - Phase 6 (Test Hygiene, Config Hot-Reload & Prometheus Metrics) **complete**.
 - Phase 7 (Dynamic Tool Call Policy Engine & Argument Guardrails) **complete**.
 - Phase 8 (Prompt Injection Firewall & LLM Guardrails) **complete**.
-- **ALL 9 EXTENDED PROJECT PHASES (P0..P8) FULLY IMPLEMENTED AND VERIFIED.**
-- 55 workspace unit and integration tests passing, 0 clippy warnings.
+- Phase 9 (SSRF & Network Egress Guardrails) **complete**.
+- Phase 10 (Human-in-the-Loop Interactive Approval Engine) **complete**.
+- **ALL 11 PROJECT PHASES (P0..P10) FULLY IMPLEMENTED AND VERIFIED.**
+- 68 workspace unit and integration tests passing, 0 clippy warnings.
 
-## Completed in Phase 8
-- `PromptFirewall` (`src/prompt_firewall.rs`): Real-time prompt injection scanner checking for instruction overrides, system prompt extractions, jailbreak personas, and ChatML/Llama delimiter hijacking.
-- `PromptFirewallConfigSection` (`src/config.rs`): Config section supporting custom patterns.
-- Telemetry: Added `prompt_injections_count` counter to `MetricsCollector` (`src/metrics.rs`).
-- Stdio & Gateway Interception: Integrated prompt firewall inspection into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
-- E2E Integration test (`tests/prompt_firewall_test.rs`).
+## Completed in Phase 9 & Phase 10
+- `NetworkGuard` (`src/network_guard.rs`): Real-time SSRF and outbound network egress inspector blocking loopback, RFC1918 private subnets, cloud metadata (`169.254.169.254`), and enforcing domain allowlists/denylists.
+- `ApprovalEngine` (`src/approval.rs`): Human-In-The-Loop interactive approval engine with direct console prompting (`CONIN$` / `/dev/tty`), async timeouts, and programmatic hook support.
+- `AgentGuardConfig` (`src/config.rs`): Added `[network_guard]` and `[approval]` configuration sections.
+- `MetricsCollector` (`src/metrics.rs`): Added `network_violations_count`, `approvals_prompted_count`, `approvals_granted_count`, `approvals_rejected_count` counters.
+- Stdio & Gateway Interception: Integrated network guard & approval engine into stdio proxy (`src/proxy/mod.rs`), HTTP gateway (`src/gateway/mod.rs`), and CLI (`src/main.rs`).
+- E2E Integration tests (`tests/network_guard_test.rs`, `tests/approval_test.rs`).
+
 
 
 
